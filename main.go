@@ -23,22 +23,6 @@ func main() {
 	s, err := discordgo.New("Bot " + token)
 	if err != nil { log.Fatalf("Errore: %v", err) }
 
-	// --- MODIFICA QUESTI NOMI CON I RUOLI REALI DEL TUO SERVER ---
-	gradiFDO := []*discordgo.ApplicationCommandOptionChoice{
-		{Name: "Allievo", Value: "Allievo"},
-		{Name: "Agente", Value: "Agente"},
-		{Name: "Agente Scelto", Value: "Agente Scelto"},
-		{Name: "Assistente", Value: "Assistente"},
-		{Name: "Vice Sovrintendente", Value: "Vice Sovrintendente"},
-		{Name: "Sovrintendente", Value: "Sovrintendente"},
-		{Name: "Vice Ispettore", Value: "Vice Ispettore"},
-		{Name: "Ispettore", Value: "Ispettore"},
-		{Name: "Commissario", Value: "Commissario"},
-		{Name: "Vice Questore", Value: "Vice Questore"},
-		{Name: "Questore", Value: "Questore"},
-		{Name: "Comandante", Value: "Comandante"},
-	}
-
 	commands := []*discordgo.ApplicationCommand{
 		{Name: "setup-ticket", Description: "Configura il pannello ticket"},
 		{Name: "chiama-fdo", Description: "Invia notifica alla Categoria FDO"},
@@ -47,7 +31,7 @@ func main() {
 			Description: "Annuncia una promozione",
 			Options: []*discordgo.ApplicationCommandOption{
 				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "Utente da promuovere", Required: true},
-				{Type: discordgo.ApplicationCommandOptionString, Name: "grado", Description: "Seleziona il nuovo grado", Required: true, Choices: gradiFDO},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "grado", Description: "Scrivi il nuovo grado", Required: true}, // Testo libero
 				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivazione", Required: true},
 			},
 		},
@@ -56,7 +40,7 @@ func main() {
 			Description: "Annuncia una retrocessione",
 			Options: []*discordgo.ApplicationCommandOption{
 				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "Utente da retrocedere", Required: true},
-				{Type: discordgo.ApplicationCommandOptionString, Name: "grado", Description: "Seleziona il grado assegnato", Required: true, Choices: gradiFDO},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "grado", Description: "Scrivi il grado assegnato", Required: true}, // Testo libero
 				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivazione", Required: true},
 			},
 		},
@@ -90,7 +74,18 @@ func main() {
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: 4, Data: &discordgo.InteractionResponseData{Content: res}})
 
 			case "chiama-fdo":
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: 4, Data: &discordgo.InteractionResponseData{Content: "🚨 **CHIAMATA FDO**\nNotifica inviata alla <@&1492918778885963836>!"}})
+				ruoloFDO := "1492918778885963836"
+				mappa := "ijisma95"
+				msg := fmt.Sprintf("<@&%s>\n🚨 **CHIAMATA FORZE DELL'ORDINE** 🚨\n\n👤 **Mittente:** <@%s>\n📍 **Cod Mappa EH:** `%s`\n⚠️ Intervento richiesto immediatamente!", ruoloFDO, i.Member.User.ID, mappa)
+				
+				s.ChannelMessageSend(i.ChannelID, msg)
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: 4,
+					Data: &discordgo.InteractionResponseData{
+						Content: "✅ Chiamata inviata con successo!",
+						Flags:   64,
+					},
+				})
 
 			case "setup-ticket":
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
