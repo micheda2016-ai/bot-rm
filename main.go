@@ -11,105 +11,121 @@ import (
 )
 
 func main() {
-	// Questo pezzo serve per far credere a Render che il bot sia un sito web
-	// Così non lo spegne dopo 5 minuti (errore timeout porta)
+	// Protezione per Render (evita lo spegnimento per timeout)
 	go func() {
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprintf(w, "Bot Online!")
-		})
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintf(w, "Bot Online!") })
 		port := os.Getenv("PORT")
-		if port == "" {
-			port = "8080"
-		}
-		log.Printf("Server finto attivo sulla porta %s", port)
+		if port == "" { port = "8080" }
 		http.ListenAndServe(":"+port, nil)
 	}()
 
-	// Recupera il Token dalle variabili di Render
 	token := os.Getenv("DISCORD_TOKEN")
 	s, err := discordgo.New("Bot " + token)
-	if err != nil {
-		log.Fatalf("Errore creazione sessione: %v", err)
-	}
+	if err != nil { log.Fatalf("Errore sessione: %v", err) }
 
-	// Definizione dei comandi Slash
+	// DEFINIZIONE COMANDI CON OPZIONI
 	commands := []*discordgo.ApplicationCommand{
+		{Name: "setup-ticket", Description: "Crea il pannello per aprire i ticket"},
+		{Name: "chiama-fdo", Description: "Invia una notifica urgente alla Categoria FDO"},
 		{
-			Name:        "setup-ticket",
-			Description: "Configura il sistema di ticket con bottone",
+			Name: "promozione",
+			Description: "Comunica una promozione ufficiale",
+			Options: []*discordgo.ApplicationCommandOption{
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente da promuovere", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "nuovo-ruolo", Description: "Il grado ottenuto", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo della promozione", Required: true},
+			},
 		},
 		{
-			Name:        "chiama-fdo",
-			Description: "Invia un'allerta per le Forze dell'Ordine",
+			Name: "retrocessione",
+			Description: "Comunica una retrocessione",
+			Options: []*discordgo.ApplicationCommandOption{
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente da retrocedere", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "vecchio-ruolo", Description: "Il grado perso", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo del provvedimento", Required: true},
+			},
+		},
+		{
+			Name: "avvertimento",
+			Description: "Invia un avvertimento ufficiale",
+			Options: []*discordgo.ApplicationCommandOption{
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente da avvertire", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo dell'avvertimento", Required: true},
+			},
 		},
 	}
 
-	// Gestore dei comandi e dei bottoni
 	s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		// Gestione dei comandi "/"
 		if i.Type == discordgo.InteractionApplicationCommand {
-			switch i.ApplicationCommandData().Name {
+			data := i.ApplicationCommandData()
+			
+			switch data.Name {
+			case "chiama-fdo":
+				// Ping specifico per la Categoria FDO usando l'ID fornito
+				ping := "<@&1492918778885963836>"
+				res := fmt.Sprintf("🚨 **CHIAMATA DI EMERGENZA** 🚨\n\n**Destinatari:** %s\n**Messaggio:** È richiesto l'intervento immediato di una pattuglia!", ping)
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: res},
+				})
+
+			case "promozione":
+				target := data.Options[0].UserValue(s)
+				res := fmt.Sprintf("🎖️ **PROMOZIONE UFFICIALE**\n\n**Soggetto:** %s\n**Nuovo Grado:** %s\n**Motivazione:** %s", target.Mention(), data.Options[1].StringValue(), data.Options[2].StringValue())
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: res},
+				})
+
+			case "retrocessione":
+				target := data.Options[0].UserValue(s)
+				res := fmt.Sprintf("📉 **RETROCESSIONE DI GRADO**\n\n**Soggetto:** %s\n**Grado Rimosso:** %s\n**Motivazione:** %s", target.Mention(), data.Options[1].StringValue(), data.Options[2].StringValue())
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: res},
+				})
+
+			case "avvertimento":
+				target := data.Options[0].UserValue(s)
+				res := fmt.Sprintf("⚠️ **AVVERTIMENTO UFFICIALE**\n\n**Soggetto:** %s\n**Motivazione:** %s\n\n*Si prega di seguire il regolamento per evitare ulteriori provvedimenti.*", target.Mention(), data.Options[1].StringValue())
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: res},
+				})
+
 			case "setup-ticket":
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
-						Content: "📩 **Sistema Ticket Attivo**\nClicca il bottone qui sotto per aprire una segnalazione.",
+						Content: "📩 **CENTRO ASSISTENZA**\nClicca il tasto qui sotto per parlare con lo Staff in un canale privato.",
 						Components: []discordgo.MessageComponent{
-							discordgo.ActionsRow{
-								Components: []discordgo.MessageComponent{
-									discordgo.Button{
-										Label:    "Apri Ticket",
-										Style:    discordgo.PrimaryButton,
-										CustomID: "open_ticket",
-									},
-								},
-							},
+							discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+								discordgo.Button{Label: "Apri Ticket", Style: discordgo.PrimaryButton, CustomID: "open_ticket", Emoji: discordgo.ComponentEmoji{Name: "📩"}},
+							}},
 						},
 					},
 				})
-			case "chiama-fdo":
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "🚨 **ALLERTA FORZE DELL'ORDINE**\nUna nuova richiesta di intervento è stata registrata!",
-					},
-				})
 			}
 		}
-
-		// Gestione del click sul bottone "Apri Ticket"
-		if i.Type == discordgo.InteractionMessageComponent {
-			if i.MessageComponentData().CustomID == "open_ticket" {
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "✅ Ticket creato con successo! Verrai contattato dallo staff.",
-						Flags:   discordgo.MessageFlagsEphemeral, // Lo vede solo chi preme
-					},
-				})
-			}
+		
+		// Gestione click bottone Ticket
+		if i.Type == discordgo.InteractionMessageComponent && i.MessageComponentData().CustomID == "open_ticket" {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "✅ **Richiesta Inviata!** Un amministratore è stato notificato e ti assisterà a breve.",
+					Flags: discordgo.MessageFlagsEphemeral,
+				},
+			})
+			// Ping allo staff nel canale quando un ticket viene aperto
+			s.ChannelMessageSend(i.ChannelID, "🔔 **NOTIFICA STAFF:** L'utente "+i.Member.User.Mention()+" ha aperto un ticket!")
 		}
 	})
 
-	// Apertura connessione
-	err = s.Open()
-	if err != nil {
-		log.Fatalf("Errore apertura: %v", err)
-	}
-
-	// Registrazione dei comandi slash su Discord
-	for _, v := range commands {
-		_, err := s.ApplicationCommandCreate(s.State.User.ID, "", v)
-		if err != nil {
-			log.Printf("Impossibile creare il comando '%v': %v", v.Name, err)
-		}
-	}
-
-	fmt.Println("Bot online con comandi Slash e protezione Timeout!")
-	
-	// Mantieni il bot acceso
+	s.Open()
+	for _, v := range commands { s.ApplicationCommandCreate(s.State.User.ID, "", v) }
+	fmt.Println("Bot pronto con ID FDO salvato!")
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop
-	s.Close()
 }
