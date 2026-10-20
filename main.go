@@ -5,15 +5,22 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 func main() {
-	token := os.Getenv("DISCORD_TOKEN")
+	// Recupera il token rimuovendo eventuali spazi bianchi o invii
+	token := strings.TrimSpace(os.Getenv("DISCORD_TOKEN"))
 	if token == "" {
 		log.Fatal("ERRORE: La variabile d'ambiente DISCORD_TOKEN non è impostata su Render!")
+	}
+
+	// Se per sbaglio nell'ambiente hai scritto "Bot ...", rimuoviamo il prefisso per evitare doppi "Bot Bot"
+	if strings.HasPrefix(token, "Bot ") {
+		token = strings.TrimPrefix(token, "Bot ")
 	}
 
 	dg, err := discordgo.New("Bot " + token)
