@@ -1,328 +1,128 @@
-package main
+# 🏛️ Rome Italy 2.0 - Custom Discord RP Bot
 
-import (
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
+Un bot Discord avanzato, modulare ed interamente basato su **Interfacce Grafiche (Buttons & Select Menus)** e **Moduli Pop-up (Modals)**, progettato appositamente per la community Roleplay su **Emergency Hamburg (Roblox)** di *Rome Italy 2.0*.
 
-	"github.com/bwmarrin/discordgo"
-)
+---
 
-func main() {
-	// Server di keep-alive per Render
-	go func() {
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintf(w, "Hamburg Gang Bot Online") })
-		port := os.Getenv("PORT")
-		if port == "" { port = "8080" }
-		http.ListenAndServe(":"+port, nil)
-	}()
+## 🌟 Caratteristiche Principali
 
-	token := os.Getenv("DISCORD_TOKEN")
-	s, err := discordgo.New("Bot " + token)
-	if err != nil {
-		log.Fatalf("Errore sessione: %v", err)
-	}
+* 🎛️ **Configurazione Hub Unificata (`/setup server`):** Pannello amministrativo centrale per gestire ruoli fazione, canali di log e stipendi dinamici senza toccare il codice.
+* 💳 **Sistema Bancario Reale & FinTech:** Gestione aperture conti su banche italiane tradizionali (*Banca Sella, Intesa Sanpaolo, UniCredit, Poste Italiane, ecc.*) ed online (*Revolut, HYPE, N26, BBVA, ecc.*).
+* 💼 **Busta Paga Automatica & Dinamica:** Riconoscimento automatico dei ruoli fazione con erogazione dello stipendio personalizzato e blocco temporale (*cooldown*) settimanale.
+* 🚨 **Banca Dati Polizia & Registro Arresti:** Form per verbali d'arresto immediati, calcolo cauzioni, verbali per contravvenzioni e storico sanzioni penali.
+* 🇮🇹 **Anagrafe & Motorizzazione (PRA):** Registrazione automatizzata di carte d'identità, licenze per armi da fuoco e immatricolazione veicoli con targhe personalizzate.
+* 🛡️ **Moderazione Staff & Sanzioni RP:** Pannello dedicato alla gestione di Warn per FailRP/RDM/VDM e Ban temporanei dalle sessioni RP con registro clip.
 
-	// ⚠️ CONFIGURAZIONE ID (Assicurati che l'ID del Server sia corretto!)
-	serverID          := "1495170590947016996" 
-	capoGangRole      := "1502996558340296754" 
-	reclutatoriRole1  := "1495179869061906602" 
-	reclutatoriRole2  := "1495179516094709850" 
-	
-	// Grado autorizzato per eseguire Ban, Warn e Blacklist
-	staffAutorizzatoRole := "1526849011510673638"
+---
 
-	// 1. DEFINIZIONE DEI COMANDI SLASH (Nativi di Discord)
-	commands := []*discordgo.ApplicationCommand{
-		{Name: "setup-gang", Description: "Invia il pannello di reclutamento e ticket della gang"},
-		{Name: "rinforzi", Description: "Richiedi rinforzi immediati sul campo!"},
-		{Name: "arsenale", Description: "Visualizza le regole sull'arsenale e l'equipaggiamento"},
-		{Name: "colpo", Description: "Pianifica un'azione o rapina di gruppo"},
-		
-		// COMANDO BAN
-		{
-			Name:        "ban-gang",
-			Description: "Banna un utente dalla gang (Solo Staff autorizzato)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{Type: discordgo.ApplicationCommandOptionUser, Name: "nome-discord", Description: "Seleziona l'utente Discord", Required: true},
-				{Type: discordgo.ApplicationCommandOptionString, Name: "nome-roblox", Description: "Inserisci il nome Roblox", Required: true},
-				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo del ban", Required: true},
-			},
-		},
-		
-		// COMANDO WARN
-		{
-			Name:        "warn-gang",
-			Description: "Assegna un ammonimento (warn) a un membro (Solo Staff autorizzato)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{Type: discordgo.ApplicationCommandOptionUser, Name: "nome-discord", Description: "Seleziona l'utente Discord da ammonire", Required: true},
-				{
-					Type:        discordgo.ApplicationCommandOptionInteger,
-					Name:        "warn",
-					Description: "Numero del warn (da 1 a 3)",
-					Required:    true,
-					Choices: []*discordgo.ApplicationCommandOptionChoice{
-						{Name: "Warn 1", Value: 1},
-						{Name: "Warn 2", Value: 2},
-						{Name: "Warn 3 (Espulsione)", Value: 3},
-					},
-				},
-				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo del warn", Required: true},
-			},
-		},
-		
-		// COMANDO BLACKLIST
-		{
-			Name:        "blacklist-gang",
-			Description: "Inserisce un utente nella blacklist della gang (Solo Staff autorizzato)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{Type: discordgo.ApplicationCommandOptionUser, Name: "nome-discord", Description: "Seleziona l'utente Discord", Required: true},
-				{Type: discordgo.ApplicationCommandOptionString, Name: "nome-roblox", Description: "Inserisci il nome Roblox", Required: true},
-				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo della blacklist", Required: true},
-			},
-		},
-	}
+## 🎛️ Configurazione Server Administrator: `/setup server`
 
-	// Funzione di supporto per verificare se l'utente ha il ruolo Staff richiesto
-	hasStaffRole := func(member *discordgo.Member) bool {
-		for _, rID := range member.Roles {
-			if rID == staffAutorizzatoRole {
-				return true
-			}
-		}
-		return false
-	}
+I Fondatori e gli Admin possono eseguire `/setup server` per aprire il pannello di controllo centrale. Tramite menu a tendina e interfacce interattive è possibile configurare:
 
-	// 2. COMANDI DI TESTO (!reclama e !chiudi)
-	s.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		if m.Author.Bot { return }
-		content := strings.ToLower(m.Content)
+### 🟢 A. Economia & Banche
+* **Imposta Stipendi per Ruolo:** Assegnazione di un importo esatto in Euro (€) associato a uno specifico Ruolo Discord (es. `@Carabiniere`, `@Polizia`, `@EMS`).
+* **Canale Log Banche:** Canale di tracciamento per bonifici, transazioni e riscossione buste paga.
+* **Cooldown Busta Paga:** Blocco temporale configurabile per il riscatto dello stipendio (Default: *7 giorni*).
 
-		if content == "!reclama" {
-			s.ChannelEditComplex(m.ChannelID, &discordgo.ChannelEdit{
-				PermissionOverwrites: []*discordgo.PermissionOverwrite{
-					{ID: m.GuildID, Type: discordgo.PermissionOverwriteTypeRole, Deny: 1024},
-					{ID: m.Author.ID, Type: discordgo.PermissionOverwriteTypeMember, Allow: 3072},
-					{ID: capoGangRole, Type: discordgo.PermissionOverwriteTypeRole, Allow: 3072},
-				},
-			})
-			s.ChannelMessageSend(m.ChannelID, "✅ **PROVINO/TICKET PRESO IN CARICO**\nGestito da: " + m.Author.Mention() + "\nAccesso riservato all'operatore e ai Capi della Gang.")
-		}
+### 🟦 B. Anagrafe & Motorizzazione
+* **Ruolo Cittadino:** Ruolo assegnato automaticamente al completamento del form anagrafico.
+* **Canale Registro Cittadinanze:** Registro pubblico/amministrativo delle carte d'identità.
+* **Canale PRA:** Pubblico Registro Automobilistico per l'archiviazione dei veicoli e delle targhe registrate.
 
-		if content == "!chiudi" {
-			s.ChannelMessageSend(m.ChannelID, "🔒 **CHIUSURA CANALE**\nL'archivio verrà eliminato tra 5 secondi...")
-			time.Sleep(5 * time.Second)
-			s.ChannelDelete(m.ChannelID)
-		}
-	})
+### 🔴 C. Forze dell'Ordine & Giustizia
+* **Ruoli Forze dell'Ordine:** Abilitazione dei ruoli Discord autorizzati ad accedere ai form d'arresto e stesura multe.
+* **Canale Registro Arresti:** Pubblicazione automatica dei verbali d'arresto formattati.
+* **Canale Log Multe:** Tracciamento delle sanzioni pecuniarie emesse.
 
-	// 3. GESTIONE INTERAZIONI (Slash, Menu e Pulsanti)
-	s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		
-		// Gestione comandi Slash
-		if i.Type == discordgo.InteractionApplicationCommand {
-			data := i.ApplicationCommandData()
-			options := data.Options
-			
-			// Trasformiamo le opzioni in una mappa
-			optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption)
-			for _, opt := range options {
-				optionMap[opt.Name] = opt
-			}
+### 🟧 D. Staff & Moderazione
+* **Ruoli Staff:** Ruoli abilitati all'utilizzo dei comandi sanzionatori.
+* **Canale Log Sanzioni:** Registro riservato per i report e le clip di prova allegate.
 
-			switch data.Name {
-			case "setup-gang":
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4,
-					Data: &discordgo.InteractionResponseData{
-						Content: "⚓ **HAMBURG SYNDICATE - QUARTIERE GENERALE**\nUsa il menu sottostante per fare richiesta di ingresso o parlare con i Capi.",
-						Components: []discordgo.MessageComponent{
-							discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-								discordgo.SelectMenu{
-									CustomID: "ticket_gang",
-									Placeholder: "Seleziona un'opzione...",
-									Options: []discordgo.SelectMenuOption{
-										{Label: "Richiesta Provino (Arruolamento)", Value: "arruolamento"},
-										{Label: "Parla con la Dirigenza (Ticket)", Value: "dirigenza"},
-									},
-								},
-							}},
-						},
-					},
-				})
+---
 
-			case "rinforzi":
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4,
-					Data: &discordgo.InteractionResponseData{
-						Content: fmt.Sprintf("🚨 **RICHIESTA RINFORZI URGENZIALE!**\nInviata da: %s\n\n⚠️ **TUTTI I MEMBRI DELLA GANG SONO PREGATI DI ENTRARE IN FREQUENZA E DIRIGERSI SUL POSTO!**", i.Member.User.Mention()),
-					},
-				})
+## ⚙️ Comandi di Setup Pannelli Singoli
 
-			case "arsenale":
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4,
-					Data: &discordgo.InteractionResponseData{
-						Content: "🔫 **REGOLAMENTO ARSENALE GANG**\n1. Ogni membro deve essere equipaggiato prima di uscire in pattuglia.\n2. Vietato vendere o regalare le armi della gang a esterni.\n3. Rifornire i depositi dopo ogni colpo andato a segno.",
-					},
-				})
+Il bot mette a disposizione una suite di comandi `/setup [modulo]` per inviare messaggi Embed permanenti dotati di bottoni interattivi all'interno dei canali dedicati.
 
-			case "colpo":
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4,
-					Data: &discordgo.InteractionResponseData{
-						Content: "💰 **PIANIFICAZIONE COLPO IN CORSO**\nUnisciti alla chiamata vocale 'Pianificazione' per ricevere i dettagli dell'azione coordinata.",
-					},
-				})
+---
 
-			case "ban-gang":
-				// Controllo Grado
-				if !hasStaffRole(i.Member) {
-					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: 4,
-						Data: &discordgo.InteractionResponseData{
-							Content: "❌ **Non hai l'autorizzazione di Staff per usare questo comando.**",
-							Flags:   64, // Messaggio visibile solo a chi lo digita (Episodico)
-						},
-					})
-					return
-				}
+### 💳 1. Settore Economia & Banche
 
-				discordUser := optionMap["nome-discord"].UserValue(s)
-				robloxName := optionMap["nome-roblox"].StringValue()
-				motivo := optionMap["motivo"].StringValue()
+#### `/setup apri-conto`
+* **Pannello:** `[ 💳 Apri Conto Corrente ]`
+* **Flusso:**
+  1. Apre un **Select Menu** per la scelta dell'istituto bancario:
+     * *Banche Tradizionali:* Banca Sella, Poste Italiane, Intesa Sanpaolo, UniCredit, BPER Banca, Banco BPM, Monte dei Paschi di Siena, Crédit Agricole.
+     * *Banche Online / FinTech:* Revolut, HYPE, N26, FinecoBank, BBVA Italia, Buddybank.
+  2. Apre un **Modal (Popup)** per confermare *Nome & Cognome RP* e creare il conto.
 
-				messaggio := fmt.Sprintf(
-					"🔨 **BAN EMESSO**\n\n• **Nome Discord:** %s\n• **Nome Roblox:** `%s`\n• **Motivo:** %s\n• **Eseguito da:** %s",
-					discordUser.Mention(), robloxName, motivo, i.Member.User.Mention(),
-				)
+#### `/setup bonifico`
+* **Pannello:** `[ 💸 Invia Bonifico ]`
+* **Flusso:** Apre un **Modal** per inserire *Destinatario*, *Banca*, *Importo (€)* e *Causale*.
 
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4,
-					Data: &discordgo.InteractionResponseData{Content: messaggio},
-				})
+#### `/setup busta-paga`
+* **Pannello:** `[ 💼 Riscuoti Busta Paga ]`
+* **Flusso:** 
+  1. Rileva automaticamente i ruoli Discord dell'utente.
+  2. Accredita lo stipendio configurato tramite `/setup server` sul conto dell'utente (assegnando la paga del ruolo più alto in caso di ruoli multipli).
+  3. Applica il blocco temporale settimanale impedendo riscossioni multiple prima della scadenza.
 
-			case "warn-gang":
-				// Controllo Grado
-				if !hasStaffRole(i.Member) {
-					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: 4,
-						Data: &discordgo.InteractionResponseData{
-							Content: "❌ **Non hai l'autorizzazione di Staff per usare questo comando.**",
-							Flags:   64,
-						},
-					})
-					return
-				}
+---
 
-				discordUser := optionMap["nome-discord"].UserValue(s)
-				warnNum := optionMap["warn"].IntValue()
-				motivo := optionMap["motivo"].StringValue()
+### 🇮🇹 2. Settore Anagrafe, Documenti & Veicoli
 
-				messaggio := fmt.Sprintf(
-					"⚠️ **AMMONIMENTO (WARN) EMESSO**\n\n• **Nome Discord:** %s\n• **Warn:** %d/3\n• **Motivo:** %s\n• **Eseguito da:** %s",
-					discordUser.Mention(), warnNum, motivo, i.Member.User.Mention(),
-				)
+#### `/setup cittadinanza`
+* **Pannello:** `[ 🇮🇹 Richiedi Cittadinanza ]`
+* **Flusso:** Apre un **Modal** per compilare *Nome RP*, *Cognome RP* e *Data di Nascita*.
 
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4,
-					Data: &discordgo.InteractionResponseData{Content: messaggio},
-				})
+#### `/setup porto-darmi`
+* **Pannello:** `[ 📜 Richiedi Porto d'Armi ]`
+* **Flusso:** Apre un **Modal** per selezionare la tipologia di licenza (*Uso Sportivo / Difesa Personale*) e inserire la motivazione.
 
-			case "blacklist-gang":
-				// Controllo Grado
-				if !hasStaffRole(i.Member) {
-					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: 4,
-						Data: &discordgo.InteractionResponseData{
-							Content: "❌ **Non hai l'autorizzazione di Staff per usare questo comando.**",
-							Flags:   64,
-						},
-					})
-					return
-				}
+#### `/setup immatricolazione`
+* **Pannello:** `[ 🚘 Immatricola Veicolo ]`
+* **Flusso:** Apre un **Modal** per registrare *Modello Veicolo*, *Targa Desiderata* e *Colore*.
 
-				discordUser := optionMap["nome-discord"].UserValue(s)
-				robloxName := optionMap["nome-roblox"].StringValue()
-				motivo := optionMap["motivo"].StringValue()
+---
 
-				messaggio := fmt.Sprintf(
-					"🚫 **BLACKLIST REGISTRATA**\n\n• **Nome Discord:** %s\n• **Nome Roblox:** `%s`\n• **Motivo:** %s\n• **Eseguito da:** %s\n\n*Nota: L'ingresso in questo elenco preclude qualsiasi futuro arruolamento.*",
-					discordUser.Mention(), robloxName, motivo, i.Member.User.Mention(),
-				)
+### 🚨 3. Settore Polizia & Giustizia
 
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4,
-					Data: &discordgo.InteractionResponseData{Content: messaggio},
-				})
-			}
-		}
+#### `/setup registra-arresto`
+* **Pannello:** `[ 🚨 Registra Arresto ]` *(Riservato alle Forze dell'Ordine)*
+* **Flusso:** Apre un **Modal** per verbalizzare:
+  * *Utente / ID Roblox dell'arrestato*
+  * *Reati commessi*
+  * *Anni / Mesi di prigione*
+  * *Cauzione (€)*
+  * *Link Prova Video / Clip*
+* Invia automaticamente il verbale nel canale **Registro Arresti**.
 
-		// Creazione Ticket/Canale Provino dal Menu a tendina
-		if i.Type == discordgo.InteractionMessageComponent && i.MessageComponentData().CustomID == "ticket_gang" {
-			utente := i.Member.User
-			ch, err := s.GuildChannelCreateComplex(i.GuildID, discordgo.GuildChannelCreateData{
-				Name: "gang-" + utente.Username,
-				Type: discordgo.ChannelTypeGuildText,
-				PermissionOverwrites: []*discordgo.PermissionOverwrite{
-					{ID: i.GuildID, Type: discordgo.PermissionOverwriteTypeRole, Deny: 1024},
-					{ID: utente.ID, Type: discordgo.PermissionOverwriteTypeMember, Allow: 3072},
-					{ID: reclutatoriRole1, Type: discordgo.PermissionOverwriteTypeRole, Allow: 3072},
-					{ID: reclutatoriRole2, Type: discordgo.PermissionOverwriteTypeRole, Allow: 3072},
-					{ID: capoGangRole, Type: discordgo.PermissionOverwriteTypeRole, Allow: 3072},
-				},
-			})
-			if err != nil { return }
+#### `/setup emetti-multa`
+* **Pannello:** `[ 📝 Emetti Multa ]`
+* **Flusso:** Apre un **Modal** per compilare *Cittadino Sanzionato*, *Importo (€)* e *Articolo del Codice della Strada/Motivo*.
 
-			s.ChannelMessageSendComplex(ch.ID, &discordgo.MessageSend{
-				Content: "🚪 **RICHIESTA APERTA**\nCandidato: " + utente.Mention() + "\nIn attesa di: <@&" + reclutatoriRole1 + "> <@&" + reclutatoriRole2 + ">",
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-						discordgo.Button{Label: "Accetta / Reclama ✋", Style: discordgo.PrimaryButton, CustomID: "btn_reclama_gang"},
-						discordgo.Button{Label: "Rifiuta / Chiudi 🔒", Style: discordgo.DangerButton, CustomID: "btn_chiudi_gang"},
-					}},
-				},
-			})
+#### `/setup registro-arresti`
+* **Pannello:** `[ 📋 Consulta Registro Arresti ]` | `[ 🔍 Cerca Fedina Penale ]`
+* **Flusso:** Permette la consultazione pubblica ed immediata dei precedenti penali e dei fermi subiti dai cittadini.
 
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: 4, Data: &discordgo.InteractionResponseData{Content: "✅ Richiesta inoltrata: <#"+ch.ID+">", Flags: 64},
-			})
-		}
+---
 
-		// Gestione dei Pulsanti
-		if i.Type == discordgo.InteractionMessageComponent {
-			if i.MessageComponentData().CustomID == "btn_reclama_gang" {
-				s.ChannelEditComplex(i.ChannelID, &discordgo.ChannelEdit{
-					PermissionOverwrites: []*discordgo.PermissionOverwrite{
-						{ID: i.GuildID, Type: discordgo.PermissionOverwriteTypeRole, Deny: 1024},
-						{ID: i.Member.User.ID, Type: discordgo.PermissionOverwriteTypeMember, Allow: 3072},
-						{ID: capoGangRole, Type: discordgo.PermissionOverwriteTypeRole, Allow: 3072},
-					},
-				})
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4, Data: &discordgo.InteractionResponseData{Content: "✅ Hai preso in carico questa richiesta!"},
-				})
-			}
-			if i.MessageComponentData().CustomID == "btn_chiudi_gang" {
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: 4, Data: &discordgo.InteractionResponseData{Content: "🔒 Chiusura in corso..."},
-				})
-				time.Sleep(2 * time.Second)
-				s.ChannelDelete(i.ChannelID)
-			}
-		}
-	})
+### ⚠️ 4. Settore Moderazione Staff
 
-	s.Open()
-	s.ApplicationCommandBulkOverwrite(s.State.User.ID, serverID, commands)
-	
-	fmt.Println("Bot Hamburg Gang Online! 🚀")
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-stop
-}
+#### `/setup staff-panel`
+* **Pannello:** `[ ⚠️ Emetti Warn ]` | `[ ⛔ Ban RP ]` | `[ 🟢 Unban RP ]`
+* **Flusso:** Moduli riservati ai moderatori per applicare o revocare sanzioni (FailRP, RDM, VDM) inserendo durata, motivazione e link alle clip di prova.
+
+---
+
+## 🛠️ Tech Stack & Requisiti
+
+* **Language:** Go / Discord.js (v14) / Python
+* **UI Components:** Discord Buttons, Select Menus, Modals (Interactions v2)
+* **Database:** SQLite / PostgreSQL / MongoDB (per il tracciamento di saldi, cooldown e fedine penali)
+
+---
+
+## 📄 Licenza
+
+Questo progetto è distribuito sotto licenza MIT. Realizzato per la community **Rome Italy 2.0 (Emergency Hamburg RP)**.
