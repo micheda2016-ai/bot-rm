@@ -1,128 +1,295 @@
-# 🏛️ Rome Italy 2.0 - Custom Discord RP Bot
+package main
 
-Un bot Discord avanzato, modulare ed interamente basato su **Interfacce Grafiche (Buttons & Select Menus)** e **Moduli Pop-up (Modals)**, progettato appositamente per la community Roleplay su **Emergency Hamburg (Roblox)** di *Rome Italy 2.0*.
+import (
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
----
+	"github.com/bwmarrin/discordgo"
+)
 
-## 🌟 Caratteristiche Principali
+func main() {
+	// Recupera il token dalle Environment Variables di Render
+	token := os.Getenv("DISCORD_TOKEN")
+	if token == "" {
+		log.Fatal("ERRORE: La variabile d'ambiente DISCORD_TOKEN non è impostata su Render!")
+	}
 
-* 🎛️ **Configurazione Hub Unificata (`/setup server`):** Pannello amministrativo centrale per gestire ruoli fazione, canali di log e stipendi dinamici senza toccare il codice.
-* 💳 **Sistema Bancario Reale & FinTech:** Gestione aperture conti su banche italiane tradizionali (*Banca Sella, Intesa Sanpaolo, UniCredit, Poste Italiane, ecc.*) ed online (*Revolut, HYPE, N26, BBVA, ecc.*).
-* 💼 **Busta Paga Automatica & Dinamica:** Riconoscimento automatico dei ruoli fazione con erogazione dello stipendio personalizzato e blocco temporale (*cooldown*) settimanale.
-* 🚨 **Banca Dati Polizia & Registro Arresti:** Form per verbali d'arresto immediati, calcolo cauzioni, verbali per contravvenzioni e storico sanzioni penali.
-* 🇮🇹 **Anagrafe & Motorizzazione (PRA):** Registrazione automatizzata di carte d'identità, licenze per armi da fuoco e immatricolazione veicoli con targhe personalizzate.
-* 🛡️ **Moderazione Staff & Sanzioni RP:** Pannello dedicato alla gestione di Warn per FailRP/RDM/VDM e Ban temporanei dalle sessioni RP con registro clip.
+	// Creazione sessione Discord
+	dg, err := discordgo.New("Bot " + token)
+	if err != nil {
+		log.Fatalf("Errore durante la creazione della sessione Discord: %v", err)
+	}
 
----
+	// Registrazione gestore degli eventi (Interazioni con Bottoni, Menu e Modals)
+	dg.AddHandler(interactionHandler)
 
-## 🎛️ Configurazione Server Administrator: `/setup server`
+	// Apertura connessione con Discord
+	err = dg.Open()
+	if err != nil {
+		log.Fatalf("Errore durante l'apertura della connessione: %v", err)
+	}
+	defer dg.Close()
 
-I Fondatori e gli Admin possono eseguire `/setup server` per aprire il pannello di controllo centrale. Tramite menu a tendina e interfacce interattive è possibile configurare:
+	log.Println("✅ Bot 'Rome Italy 2.0' avviato con successo su Render!")
 
-### 🟢 A. Economia & Banche
-* **Imposta Stipendi per Ruolo:** Assegnazione di un importo esatto in Euro (€) associato a uno specifico Ruolo Discord (es. `@Carabiniere`, `@Polizia`, `@EMS`).
-* **Canale Log Banche:** Canale di tracciamento per bonifici, transazioni e riscossione buste paga.
-* **Cooldown Busta Paga:** Blocco temporale configurabile per il riscatto dello stipendio (Default: *7 giorni*).
+	// Registrazione Comandi Slash
+	registerCommands(dg)
 
-### 🟦 B. Anagrafe & Motorizzazione
-* **Ruolo Cittadino:** Ruolo assegnato automaticamente al completamento del form anagrafico.
-* **Canale Registro Cittadinanze:** Registro pubblico/amministrativo delle carte d'identità.
-* **Canale PRA:** Pubblico Registro Automobilistico per l'archiviazione dei veicoli e delle targhe registrate.
+	// Mantiene il bot in esecuzione
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	<-sc
 
-### 🔴 C. Forze dell'Ordine & Giustizia
-* **Ruoli Forze dell'Ordine:** Abilitazione dei ruoli Discord autorizzati ad accedere ai form d'arresto e stesura multe.
-* **Canale Registro Arresti:** Pubblicazione automatica dei verbali d'arresto formattati.
-* **Canale Log Multe:** Tracciamento delle sanzioni pecuniarie emesse.
+	log.Println("Arresto del bot...")
+}
 
-### 🟧 D. Staff & Moderazione
-* **Ruoli Staff:** Ruoli abilitati all'utilizzo dei comandi sanzionatori.
-* **Canale Log Sanzioni:** Registro riservato per i report e le clip di prova allegate.
+// Registrazione comandi Slash
+func registerCommands(s *discordgo.Session) {
+	commands := []*discordgo.ApplicationCommand{
+		{
+			Name:        "setup",
+			Description: "Configura i pannelli interattivi del server",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "server",
+					Description: "Pannello di configurazione generale del bot",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "apri-conto",
+					Description: "Invia il pannello bancario per l'apertura del conto",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "bonifico",
+					Description: "Invia il pannello per l'invio dei bonifici",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "busta-paga",
+					Description: "Invia il pannello per la riscossione dello stipendio",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "cittadinanza",
+					Description: "Invia il pannello anagrafe per la carta d'identità",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "porto-darmi",
+					Description: "Invia il pannello per la richiesta del porto d'armi",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "immatricolazione",
+					Description: "Invia il pannello PRA per immatricolare i veicoli",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "registra-arresto",
+					Description: "Invia il pannello delle Forze dell'Ordine per registrare arresti",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "emetti-multa",
+					Description: "Invia il pannello per emettere sanzioni stradali",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "staff-panel",
+					Description: "Invia il pannello riservato alla moderazione Staff",
+				},
+			},
+		},
+	}
 
----
+	for _, cmd := range commands {
+		_, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd)
+		if err != nil {
+			log.Printf("Errore nella registrazione del comando '%s': %v", cmd.Name, err)
+		}
+	}
+}
 
-## ⚙️ Comandi di Setup Pannelli Singoli
+// Gestore centrale di tutte le interazioni (Comandi, Bottoni, Select Menus, Modals)
+func interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	switch i.Type {
+	case discordgo.InteractionApplicationCommand:
+		handleSlashCommands(s, i)
+	case discordgo.InteractionMessageComponent:
+		handleComponents(s, i)
+	case discordgo.InteractionModalSubmit:
+		handleModalSubmit(s, i)
+	}
+}
 
-Il bot mette a disposizione una suite di comandi `/setup [modulo]` per inviare messaggi Embed permanenti dotati di bottoni interattivi all'interno dei canali dedicati.
+// Gestione Esecuzione Comandi Slash
+func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	options := i.ApplicationCommandData().Options
+	if len(options) == 0 {
+		return
+	}
 
----
+	subCmd := options[0].Name
 
-### 💳 1. Settore Economia & Banche
+	switch subCmd {
+	case "server":
+		sendServerSetupPanel(s, i)
+	case "apri-conto":
+		sendApriContoPanel(s, i)
+	case "busta-paga":
+		sendBustaPagaPanel(s, i)
+	case "cittadinanza":
+		sendCittadinanzaPanel(s, i)
+	case "registra-arresto":
+		sendRegistraArrestoPanel(s, i)
+	default:
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: fmt.Sprintf("✅ Pannello `/setup %s` inviato con successo nel canale!", subCmd),
+			},
+		})
+	}
+}
 
-#### `/setup apri-conto`
-* **Pannello:** `[ 💳 Apri Conto Corrente ]`
-* **Flusso:**
-  1. Apre un **Select Menu** per la scelta dell'istituto bancario:
-     * *Banche Tradizionali:* Banca Sella, Poste Italiane, Intesa Sanpaolo, UniCredit, BPER Banca, Banco BPM, Monte dei Paschi di Siena, Crédit Agricole.
-     * *Banche Online / FinTech:* Revolut, HYPE, N26, FinecoBank, BBVA Italia, Buddybank.
-  2. Apre un **Modal (Popup)** per confermare *Nome & Cognome RP* e creare il conto.
+// ---------------------------------------------------------
+// PANNELLI EMBED CON BOTTONI E MENU A TENDINA
+// ---------------------------------------------------------
 
-#### `/setup bonifico`
-* **Pannello:** `[ 💸 Invia Bonifico ]`
-* **Flusso:** Apre un **Modal** per inserire *Destinatario*, *Banca*, *Importo (€)* e *Causale*.
+// Pannello /setup server
+func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	embed := &discordgo.MessageEmbed{
+		Title:       "⚙️ PANNELLO DI CONFIGURAZIONE GENERALE - ROME ITALY 2.0",
+		Description: "Seleziona dal menu a tendina sottostante la sezione che desideri configurare:",
+		Color:       0x0099FF,
+	}
 
-#### `/setup busta-paga`
-* **Pannello:** `[ 💼 Riscuoti Busta Paga ]`
-* **Flusso:** 
-  1. Rileva automaticamente i ruoli Discord dell'utente.
-  2. Accredita lo stipendio configurato tramite `/setup server` sul conto dell'utente (assegnando la paga del ruolo più alto in caso di ruoli multipli).
-  3. Applica il blocco temporale settimanale impedendo riscossioni multiple prima della scadenza.
+	selectMenu := discordgo.SelectMenu{
+		CustomID:    "setup_server_select",
+		Placeholder: "Scegli la categoria da configurare...",
+		Options: []discordgo.SelectMenuOption{
+			{
+				Label:       "Economia & Banche",
+				Value:       "cfg_economy",
+				Description: "Configura stipendi per ruolo, canali banche e cooldown",
+				Emoji:       discordgo.ComponentEmoji{Name: "💰"},
+			},
+			{
+				Label:       "Anagrafe & Motorizzazione",
+				Value:       "cfg_anagrafe",
+				Description: "Imposta ruoli cittadini, canali PRA e carte d'identità",
+				Emoji:       discordgo.ComponentEmoji{Name: "🇮🇹"},
+			},
+			{
+				Label:       "Forze dell'Ordine & Giustizia",
+				Value:       "cfg_police",
+				Description: "Gestisci ruoli abilitati ad arresti e registro verbali",
+				Emoji:       discordgo.ComponentEmoji{Name: "🚨"},
+			},
+			{
+				Label:       "Staff & Moderazione",
+				Value:       "cfg_staff",
+				Description: "Configura permessi Warn, Ban RP e canali log",
+				Emoji:       discordgo.ComponentEmoji{Name: "🛡️"},
+			},
+		},
+	}
 
----
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Embeds: []*discordgo.MessageEmbed{embed},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{selectMenu}},
+			},
+		},
+	})
+}
 
-### 🇮🇹 2. Settore Anagrafe, Documenti & Veicoli
+// Pannello /setup apri-conto
+func sendApriContoPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	embed := &discordgo.MessageEmbed{
+		Title:       "🏛️ APERTURA CONTO CORRENTE - ROME ITALY 2.0",
+		Description: "Clicca sul bottone sottostante per scegliere il tuo istituto bancario e registrare il tuo conto corrente.",
+		Color:       0x2ECC71,
+	}
 
-#### `/setup cittadinanza`
-* **Pannello:** `[ 🇮🇹 Richiedi Cittadinanza ]`
-* **Flusso:** Apre un **Modal** per compilare *Nome RP*, *Cognome RP* e *Data di Nascita*.
+	button := discordgo.Button{
+		Label:    "Apri Conto Corrente",
+		Style:    discordgo.SuccessButton,
+		CustomID: "btn_apri_conto",
+		Emoji:    discordgo.ComponentEmoji{Name: "💳"},
+	}
 
-#### `/setup porto-darmi`
-* **Pannello:** `[ 📜 Richiedi Porto d'Armi ]`
-* **Flusso:** Apre un **Modal** per selezionare la tipologia di licenza (*Uso Sportivo / Difesa Personale*) e inserire la motivazione.
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Embeds: []*discordgo.MessageEmbed{embed},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{button}},
+			},
+		},
+	})
+}
 
-#### `/setup immatricolazione`
-* **Pannello:** `[ 🚘 Immatricola Veicolo ]`
-* **Flusso:** Apre un **Modal** per registrare *Modello Veicolo*, *Targa Desiderata* e *Colore*.
+// Pannello /setup busta-paga
+func sendBustaPagaPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	embed := &discordgo.MessageEmbed{
+		Title:       "💼 RISCOSSIONE BUSTA PAGA - ROME ITALY 2.0",
+		Description: "Clicca sul bottone per riscattare lo stipendio settimanale. Il bot riconoscerà automaticamente il tuo ruolo fazione e accrediterà l'importo sul tuo conto.",
+		Color:       0xF1C40F,
+	}
 
----
+	button := discordgo.Button{
+		Label:    "Riscuoti Busta Paga",
+		Style:    discordgo.PrimaryButton,
+		CustomID: "btn_riscuoti_stipendio",
+		Emoji:    discordgo.ComponentEmoji{Name: "💵"},
+	}
 
-### 🚨 3. Settore Polizia & Giustizia
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Embeds: []*discordgo.MessageEmbed{embed},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{button}},
+			},
+		},
+	})
+}
 
-#### `/setup registra-arresto`
-* **Pannello:** `[ 🚨 Registra Arresto ]` *(Riservato alle Forze dell'Ordine)*
-* **Flusso:** Apre un **Modal** per verbalizzare:
-  * *Utente / ID Roblox dell'arrestato*
-  * *Reati commessi*
-  * *Anni / Mesi di prigione*
-  * *Cauzione (€)*
-  * *Link Prova Video / Clip*
-* Invia automaticamente il verbale nel canale **Registro Arresti**.
+// Pannello /setup cittadinanza
+func sendCittadinanzaPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	embed := &discordgo.MessageEmbed{
+		Title:       "🇮🇹 ANAGRAFE CENTRALE - ROME ITALY 2.0",
+		Description: "Richiedi la tua Carta d'Identità per diventare un cittadino riconosciuto nel server.",
+		Color:       0x3498DB,
+	}
 
-#### `/setup emetti-multa`
-* **Pannello:** `[ 📝 Emetti Multa ]`
-* **Flusso:** Apre un **Modal** per compilare *Cittadino Sanzionato*, *Importo (€)* e *Articolo del Codice della Strada/Motivo*.
+	button := discordgo.Button{
+		Label:    "Richiedi Cittadinanza",
+		Style:    discordgo.PrimaryButton,
+		CustomID: "btn_richiedi_cittadinanza",
+		Emoji:    discordgo.ComponentEmoji{Name: "🆔"},
+	}
 
-#### `/setup registro-arresti`
-* **Pannello:** `[ 📋 Consulta Registro Arresti ]` | `[ 🔍 Cerca Fedina Penale ]`
-* **Flusso:** Permette la consultazione pubblica ed immediata dei precedenti penali e dei fermi subiti dai cittadini.
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Embeds: []*discordgo.MessageEmbed{embed},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{button}},
+			},
+		},
+	})
+}
 
----
-
-### ⚠️ 4. Settore Moderazione Staff
-
-#### `/setup staff-panel`
-* **Pannello:** `[ ⚠️ Emetti Warn ]` | `[ ⛔ Ban RP ]` | `[ 🟢 Unban RP ]`
-* **Flusso:** Moduli riservati ai moderatori per applicare o revocare sanzioni (FailRP, RDM, VDM) inserendo durata, motivazione e link alle clip di prova.
-
----
-
-## 🛠️ Tech Stack & Requisiti
-
-* **Language:** Go / Discord.js (v14) / Python
-* **UI Components:** Discord Buttons, Select Menus, Modals (Interactions v2)
-* **Database:** SQLite / PostgreSQL / MongoDB (per il tracciamento di saldi, cooldown e fedine penali)
-
----
-
-## 📄 Licenza
-
-Questo progetto è distribuito sotto licenza MIT. Realizzato per la community **Rome Italy 2.0 (Emergency Hamburg RP)**.
+// Pannello /setup registra-arresto
+func sendRegistraArrestoPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	embed := &discordgo.MessageEmbed{
+		Title:       "🚨 BANCA DATI POLIZIA DI STATO /
