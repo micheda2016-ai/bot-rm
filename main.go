@@ -13,10 +13,10 @@ import (
 )
 
 func main() {
-	// Server HTTP per soddisfare le verifiche di Render
+	// Server HTTP per mantenere Render sempre attivo e in salute sulla porta 10000
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "10000"
 	}
 	go func() {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -31,31 +31,30 @@ func main() {
 	// Recupera e pulisce il token
 	token := strings.TrimSpace(os.Getenv("DISCORD_TOKEN"))
 	if token == "" {
-		log.Fatal("ERRORE: La variabile d'ambiente DISCORD_TOKEN non è impostata!")
+		log.Println("⚠️ ERRORE: La variabile d'ambiente DISCORD_TOKEN non è impostata!")
+	} else {
+		if strings.HasPrefix(token, "Bot ") {
+			token = strings.TrimPrefix(token, "Bot ")
+		}
+
+		dg, err := discordgo.New("Bot " + token)
+		if err != nil {
+			log.Printf("Errore durante la creazione della sessione Discord: %v", err)
+		} else {
+			dg.AddHandler(interactionHandler)
+
+			err = dg.Open()
+			if err != nil {
+				log.Printf("Errore durante l'apertura della connessione a Discord (possibile rate limit temporaneo): %v", err)
+			} else {
+				defer dg.Close()
+				log.Println("✅ Bot 'Rome Italy 2.0' avviato con successo su Render!")
+				registerCommands(dg)
+			}
+		}
 	}
 
-	if strings.HasPrefix(token, "Bot ") {
-		token = strings.TrimPrefix(token, "Bot ")
-	}
-
-	// Inizializzazione Discord
-	dg, err := discordgo.New("Bot " + token)
-	if err != nil {
-		log.Fatalf("Errore durante la creazione della sessione Discord: %v", err)
-	}
-
-	dg.AddHandler(interactionHandler)
-
-	err = dg.Open()
-	if err != nil {
-		log.Fatalf("Errore durante l'apertura della connessione: %v", err)
-	}
-	defer dg.Close()
-
-	log.Println("✅ Bot 'Rome Italy 2.0' avviato con successo su Render!")
-
-	registerCommands(dg)
-
+	// Mantiene il servizio attivo per il server HTTP
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
