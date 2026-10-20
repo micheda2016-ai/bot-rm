@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,17 +13,32 @@ import (
 )
 
 func main() {
-	// Recupera il token rimuovendo eventuali spazi bianchi o invii
+	// Server HTTP per soddisfare le verifiche di Render
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	go func() {
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, "Bot Rome Italy 2.0 Online!")
+		})
+		log.Printf("Server HTTP avviato sulla porta %s", port)
+		if err := http.ListenAndServe(":"+port, nil); err != nil {
+			log.Printf("Errore server HTTP: %v", err)
+		}
+	}()
+
+	// Recupera e pulisce il token
 	token := strings.TrimSpace(os.Getenv("DISCORD_TOKEN"))
 	if token == "" {
-		log.Fatal("ERRORE: La variabile d'ambiente DISCORD_TOKEN non è impostata su Render!")
+		log.Fatal("ERRORE: La variabile d'ambiente DISCORD_TOKEN non è impostata!")
 	}
 
-	// Se per sbaglio nell'ambiente hai scritto "Bot ...", rimuoviamo il prefisso per evitare doppi "Bot Bot"
 	if strings.HasPrefix(token, "Bot ") {
 		token = strings.TrimPrefix(token, "Bot ")
 	}
 
+	// Inizializzazione Discord
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		log.Fatalf("Errore durante la creazione della sessione Discord: %v", err)
