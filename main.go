@@ -11,22 +11,18 @@ import (
 )
 
 func main() {
-	// Recupera il token dalle Environment Variables di Render
 	token := os.Getenv("DISCORD_TOKEN")
 	if token == "" {
 		log.Fatal("ERRORE: La variabile d'ambiente DISCORD_TOKEN non è impostata su Render!")
 	}
 
-	// Creazione sessione Discord
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		log.Fatalf("Errore durante la creazione della sessione Discord: %v", err)
 	}
 
-	// Registrazione gestore degli eventi (Interazioni con Bottoni, Menu e Modals)
 	dg.AddHandler(interactionHandler)
 
-	// Apertura connessione con Discord
 	err = dg.Open()
 	if err != nil {
 		log.Fatalf("Errore durante l'apertura della connessione: %v", err)
@@ -35,10 +31,8 @@ func main() {
 
 	log.Println("✅ Bot 'Rome Italy 2.0' avviato con successo su Render!")
 
-	// Registrazione Comandi Slash
 	registerCommands(dg)
 
-	// Mantiene il bot in esecuzione
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
@@ -46,7 +40,6 @@ func main() {
 	log.Println("Arresto del bot...")
 }
 
-// Registrazione comandi Slash
 func registerCommands(s *discordgo.Session) {
 	commands := []*discordgo.ApplicationCommand{
 		{
@@ -115,7 +108,6 @@ func registerCommands(s *discordgo.Session) {
 	}
 }
 
-// Gestore centrale di tutte le interazioni (Comandi, Bottoni, Select Menus, Modals)
 func interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch i.Type {
 	case discordgo.InteractionApplicationCommand:
@@ -127,7 +119,6 @@ func interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 }
 
-// Gestione Esecuzione Comandi Slash
 func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	options := i.ApplicationCommandData().Options
 	if len(options) == 0 {
@@ -157,11 +148,6 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 }
 
-// ---------------------------------------------------------
-// PANNELLI EMBED CON BOTTONI E MENU A TENDINA
-// ---------------------------------------------------------
-
-// Pannello /setup server
 func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
 		Title:       "⚙️ PANNELLO DI CONFIGURAZIONE GENERALE - ROME ITALY 2.0",
@@ -174,25 +160,25 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		Placeholder: "Scegli la categoria da configurare...",
 		Options: []discordgo.SelectMenuOption{
 			{
-				Label:       "Economia & Banche",
+				Label:       "Economia e Banche",
 				Value:       "cfg_economy",
 				Description: "Configura stipendi per ruolo, canali banche e cooldown",
 				Emoji:       discordgo.ComponentEmoji{Name: "💰"},
 			},
 			{
-				Label:       "Anagrafe & Motorizzazione",
+				Label:       "Anagrafe e Motorizzazione",
 				Value:       "cfg_anagrafe",
 				Description: "Imposta ruoli cittadini, canali PRA e carte d'identità",
 				Emoji:       discordgo.ComponentEmoji{Name: "🇮🇹"},
 			},
 			{
-				Label:       "Forze dell'Ordine & Giustizia",
+				Label:       "Forze dell'Ordine e Giustizia",
 				Value:       "cfg_police",
 				Description: "Gestisci ruoli abilitati ad arresti e registro verbali",
 				Emoji:       discordgo.ComponentEmoji{Name: "🚨"},
 			},
 			{
-				Label:       "Staff & Moderazione",
+				Label:       "Staff e Moderazione",
 				Value:       "cfg_staff",
 				Description: "Configura permessi Warn, Ban RP e canali log",
 				Emoji:       discordgo.ComponentEmoji{Name: "🛡️"},
@@ -211,7 +197,6 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	})
 }
 
-// Pannello /setup apri-conto
 func sendApriContoPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
 		Title:       "🏛️ APERTURA CONTO CORRENTE - ROME ITALY 2.0",
@@ -237,7 +222,6 @@ func sendApriContoPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
-// Pannello /setup busta-paga
 func sendBustaPagaPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
 		Title:       "💼 RISCOSSIONE BUSTA PAGA - ROME ITALY 2.0",
@@ -263,7 +247,6 @@ func sendBustaPagaPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
-// Pannello /setup cittadinanza
 func sendCittadinanzaPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
 		Title:       "🇮🇹 ANAGRAFE CENTRALE - ROME ITALY 2.0",
@@ -289,7 +272,99 @@ func sendCittadinanzaPanel(s *discordgo.Session, i *discordgo.InteractionCreate)
 	})
 }
 
-// Pannello /setup registra-arresto
 func sendRegistraArrestoPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
-		Title:       "🚨 BANCA DATI POLIZIA DI STATO /
+		Title:       "🚨 BANCA DATI POLIZIA DI STATO / CARABINIERI",
+		Description: "Pannello riservato alle Forze dell'Ordine per la verbalizzazione dei fermi e degli arresti.",
+		Color:       0xE74C3C,
+	}
+
+	button := discordgo.Button{
+		Label:    "Registra Arresto",
+		Style:    discordgo.DangerButton,
+		CustomID: "btn_registra_arresto",
+		Emoji:    discordgo.ComponentEmoji{Name: "📝"},
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Embeds: []*discordgo.MessageEmbed{embed},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{button}},
+			},
+		},
+	})
+}
+
+func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	customID := i.MessageComponentData().CustomID
+
+	switch customID {
+	case "btn_apri_conto":
+		selectBanche := discordgo.SelectMenu{
+			CustomID:    "select_banca_choice",
+			Placeholder: "Seleziona il tuo istituto bancario...",
+			Options: []discordgo.SelectMenuOption{
+				{Label: "Banca Sella", Value: "banca_sella", Emoji: discordgo.ComponentEmoji{Name: "🏛️"}},
+				{Label: "Poste Italiane", Value: "poste", Emoji: discordgo.ComponentEmoji{Name: "📮"}},
+				{Label: "Intesa Sanpaolo", Value: "intesa", Emoji: discordgo.ComponentEmoji{Name: "🏦"}},
+				{Label: "UniCredit", Value: "unicredit", Emoji: discordgo.ComponentEmoji{Name: "🔴"}},
+				{Label: "BPER Banca", Value: "bper", Emoji: discordgo.ComponentEmoji{Name: "🟦"}},
+				{Label: "Banco BPM", Value: "bpm", Emoji: discordgo.ComponentEmoji{Name: "🟢"}},
+				{Label: "Monte dei Paschi di Siena", Value: "mps", Emoji: discordgo.ComponentEmoji{Name: "🏰"}},
+				{Label: "Credit Agricole Italia", Value: "credit_agricole", Emoji: discordgo.ComponentEmoji{Name: "🌾"}},
+				{Label: "Revolut", Value: "revolut", Emoji: discordgo.ComponentEmoji{Name: "💳"}},
+				{Label: "HYPE (Banca Sella)", Value: "hype", Emoji: discordgo.ComponentEmoji{Name: "⚡"}},
+				{Label: "N26", Value: "n26", Emoji: discordgo.ComponentEmoji{Name: "🖤"}},
+				{Label: "FinecoBank", Value: "fineco", Emoji: discordgo.ComponentEmoji{Name: "📈"}},
+				{Label: "BBVA Italia", Value: "bbva", Emoji: discordgo.ComponentEmoji{Name: "🟡"}},
+				{Label: "Buddybank", Value: "buddybank", Emoji: discordgo.ComponentEmoji{Name: "📱"}},
+			},
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "Scegli la banca con cui desideri aprire il conto corrente:",
+				Flags:   discordgo.MessageFlagsEphemeral,
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{selectBanche}},
+				},
+			},
+		})
+
+	case "select_banca_choice":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "modal_conferma_conto",
+				Title:    "Apertura Conto Corrente",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "input_nome_cognome_rp",
+								Label:       "Nome e Cognome RP",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "Es. Mario Rossi",
+								Required:    true,
+							},
+						},
+					},
+				},
+			},
+		})
+
+	case "btn_richiedi_cittadinanza":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "modal_cittadinanza",
+				Title:    "Registrazione Carta d'Identita",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "input_nome_rp",
+								Label:       "Nome RP",
