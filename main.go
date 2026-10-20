@@ -163,25 +163,25 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 				Label:       "Economia e Banche",
 				Value:       "cfg_economy",
 				Description: "Configura stipendi per ruolo, canali banche e cooldown",
-				Emoji:       discordgo.ComponentEmoji{Name: "💰"},
+				Emoji:       &discordgo.ComponentEmoji{Name: "💰"},
 			},
 			{
 				Label:       "Anagrafe e Motorizzazione",
 				Value:       "cfg_anagrafe",
 				Description: "Imposta ruoli cittadini, canali PRA e carte d'identità",
-				Emoji:       discordgo.ComponentEmoji{Name: "🇮🇹"},
+				Emoji:       &discordgo.ComponentEmoji{Name: "🇮🇹"},
 			},
 			{
 				Label:       "Forze dell'Ordine e Giustizia",
 				Value:       "cfg_police",
 				Description: "Gestisci ruoli abilitati ad arresti e registro verbali",
-				Emoji:       discordgo.ComponentEmoji{Name: "🚨"},
+				Emoji:       &discordgo.ComponentEmoji{Name: "🚨"},
 			},
 			{
 				Label:       "Staff e Moderazione",
 				Value:       "cfg_staff",
 				Description: "Configura permessi Warn, Ban RP e canali log",
-				Emoji:       discordgo.ComponentEmoji{Name: "🛡️"},
+				Emoji:       &discordgo.ComponentEmoji{Name: "🛡️"},
 			},
 		},
 	}
@@ -208,7 +208,7 @@ func sendApriContoPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Label:    "Apri Conto Corrente",
 		Style:    discordgo.SuccessButton,
 		CustomID: "btn_apri_conto",
-		Emoji:    discordgo.ComponentEmoji{Name: "💳"},
+		Emoji:    &discordgo.ComponentEmoji{Name: "💳"},
 	}
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -233,7 +233,7 @@ func sendBustaPagaPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Label:    "Riscuoti Busta Paga",
 		Style:    discordgo.PrimaryButton,
 		CustomID: "btn_riscuoti_stipendio",
-		Emoji:    discordgo.ComponentEmoji{Name: "💵"},
+		Emoji:    &discordgo.ComponentEmoji{Name: "💵"},
 	}
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -258,7 +258,7 @@ func sendCittadinanzaPanel(s *discordgo.Session, i *discordgo.InteractionCreate)
 		Label:    "Richiedi Cittadinanza",
 		Style:    discordgo.PrimaryButton,
 		CustomID: "btn_richiedi_cittadinanza",
-		Emoji:    discordgo.ComponentEmoji{Name: "🆔"},
+		Emoji:    &discordgo.ComponentEmoji{Name: "🆔"},
 	}
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -283,7 +283,7 @@ func sendRegistraArrestoPanel(s *discordgo.Session, i *discordgo.InteractionCrea
 		Label:    "Registra Arresto",
 		Style:    discordgo.DangerButton,
 		CustomID: "btn_registra_arresto",
-		Emoji:    discordgo.ComponentEmoji{Name: "📝"},
+		Emoji:    &discordgo.ComponentEmoji{Name: "📝"},
 	}
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -306,20 +306,20 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			CustomID:    "select_banca_choice",
 			Placeholder: "Seleziona il tuo istituto bancario...",
 			Options: []discordgo.SelectMenuOption{
-				{Label: "Banca Sella", Value: "banca_sella", Emoji: discordgo.ComponentEmoji{Name: "🏛️"}},
-				{Label: "Poste Italiane", Value: "poste", Emoji: discordgo.ComponentEmoji{Name: "📮"}},
-				{Label: "Intesa Sanpaolo", Value: "intesa", Emoji: discordgo.ComponentEmoji{Name: "🏦"}},
-				{Label: "UniCredit", Value: "unicredit", Emoji: discordgo.ComponentEmoji{Name: "🔴"}},
-				{Label: "BPER Banca", Value: "bper", Emoji: discordgo.ComponentEmoji{Name: "🟦"}},
-				{Label: "Banco BPM", Value: "bpm", Emoji: discordgo.ComponentEmoji{Name: "🟢"}},
-				{Label: "Monte dei Paschi di Siena", Value: "mps", Emoji: discordgo.ComponentEmoji{Name: "🏰"}},
-				{Label: "Credit Agricole Italia", Value: "credit_agricole", Emoji: discordgo.ComponentEmoji{Name: "🌾"}},
-				{Label: "Revolut", Value: "revolut", Emoji: discordgo.ComponentEmoji{Name: "💳"}},
-				{Label: "HYPE (Banca Sella)", Value: "hype", Emoji: discordgo.ComponentEmoji{Name: "⚡"}},
-				{Label: "N26", Value: "n26", Emoji: discordgo.ComponentEmoji{Name: "🖤"}},
-				{Label: "FinecoBank", Value: "fineco", Emoji: discordgo.ComponentEmoji{Name: "📈"}},
-				{Label: "BBVA Italia", Value: "bbva", Emoji: discordgo.ComponentEmoji{Name: "🟡"}},
-				{Label: "Buddybank", Value: "buddybank", Emoji: discordgo.ComponentEmoji{Name: "📱"}},
+				{Label: "Banca Sella", Value: "banca_sella", Emoji: &discordgo.ComponentEmoji{Name: "🏛️"}},
+				{Label: "Poste Italiane", Value: "poste", Emoji: &discordgo.ComponentEmoji{Name: "📮"}},
+				{Label: "Intesa Sanpaolo", Value: "intesa", Emoji: &discordgo.ComponentEmoji{Name: "🏦"}},
+				{Label: "UniCredit", Value: "unicredit", Emoji: &discordgo.ComponentEmoji{Name: "🔴"}},
+				{Label: "BPER Banca", Value: "bper", Emoji: &discordgo.ComponentEmoji{Name: "🟦"}},
+				{Label: "Banco BPM", Value: "bpm", Emoji: &discordgo.ComponentEmoji{Name: "🟢"}},
+				{Label: "Monte dei Paschi di Siena", Value: "mps", Emoji: &discordgo.ComponentEmoji{Name: "🏰"}},
+				{Label: "Credit Agricole Italia", Value: "credit_agricole", Emoji: &discordgo.ComponentEmoji{Name: "🌾"}},
+				{Label: "Revolut", Value: "revolut", Emoji: &discordgo.ComponentEmoji{Name: "💳"}},
+				{Label: "HYPE (Banca Sella)", Value: "hype", Emoji: &discordgo.ComponentEmoji{Name: "⚡"}},
+				{Label: "N26", Value: "n26", Emoji: &discordgo.ComponentEmoji{Name: "🖤"}},
+				{Label: "FinecoBank", Value: "fineco", Emoji: &discordgo.ComponentEmoji{Name: "📈"}},
+				{Label: "BBVA Italia", Value: "bbva", Emoji: &discordgo.ComponentEmoji{Name: "🟡"}},
+				{Label: "Buddybank", Value: "buddybank", Emoji: &discordgo.ComponentEmoji{Name: "📱"}},
 			},
 		}
 
