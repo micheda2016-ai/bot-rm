@@ -165,7 +165,7 @@ func registerCommands(s *discordgo.Session) {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "busta-paga",
-					Description: "Gestione completa e invio del pannello Busta Paga con stipendi per ruolo",
+					Description: "Gestione e invio del pannello Busta Paga con configurazione stipendi per ruolo",
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -317,7 +317,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 }
 
-// Menu /setup busta-paga con i 2 bottoni (Invia e Configura)
+// Menu /setup busta-paga con i 2 bottoni ben distinti
 func sendBustaPagaSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	cfg := getOrCreateConfig("busta-paga")
 	targetChannel := cfg.PanelChannelID
@@ -330,7 +330,7 @@ func sendBustaPagaSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreat
 
 	embed := &discordgo.MessageEmbed{
 		Title:       "💵 GESTIONE BUSTA PAGA & STIPENDI SETTIMANALI",
-		Description: fmt.Sprintf("Da questo pannello puoi inviare il bottone di riscossione o configurare gli stipendi associati ai ruoli del server.\n\n%s", channelInfo),
+		Description: fmt.Sprintf("Usa i pulsanti sottostanti per inviare il pannello pubblico o configurare gli stipendi dei ruoli del server.\n\n%s", channelInfo),
 		Color:       0xF1C40F,
 	}
 
@@ -455,7 +455,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// Pressione bottone "Configura Stipendi" in /setup busta-paga
+	// Pressione bottone "Configura Stipendi" dentro /setup busta-paga
 	if customID == "btn_open_busta_paga_config" {
 		btnAddSalario := discordgo.Button{
 			Label:    "➕ Imposta Stipendio Ruolo",
@@ -474,7 +474,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "⚙️ **CONFIGURAZIONE STIPENDI BUSTA PAGA:**\nScegli un'opzione per associare uno stipendio ad un ruolo inserendone la menzione/ID o per consultare l'elenco dei ruoli salvati:",
+				Content: "⚙️ **CONFIGURAZIONE STIPENDI BUSTA PAGA:**\nSeleziona un'opzione per impostare gli stipendi o visualizzare la lista:",
 				Flags:   discordgo.MessageFlagsEphemeral,
 				Components: []discordgo.MessageComponent{
 					discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnAddSalario, btnListSalario}},
@@ -484,7 +484,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// Apre il Form Modale per inserire ID Ruolo e Cifra Stipendio
+	// Pressione bottone "Aggiungi Stipendio" che apre la modale diretta
 	if customID == "btn_trigger_add_salary_modal" {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseModal,
@@ -852,7 +852,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		roleInput := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
 		amountStr := data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
 
-		// Estrae l'ID pulito se l'utente incolla una menzione <@&123456789>
+		// Estrae l'ID pulito anche se viene incollata una menzione <@&123456789>
 		roleID := strings.TrimPrefix(roleInput, "<@&")
 		roleID = strings.TrimSuffix(roleID, ">")
 		roleID = strings.TrimSpace(roleID)
