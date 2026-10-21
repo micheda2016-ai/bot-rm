@@ -317,7 +317,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 }
 
-// Menu /setup busta-paga con gestione stipendi per ruolo
+// Menu /setup busta-paga con i 2 bottoni (Invia e Configura)
 func sendBustaPagaSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	cfg := getOrCreateConfig("busta-paga")
 	targetChannel := cfg.PanelChannelID
@@ -457,45 +457,46 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	// Pressione bottone "Configura Stipendi" in /setup busta-paga
 	if customID == "btn_open_busta_paga_config" {
-		// Menu a tendina nativo per selezionare i ruoli (@) del server
-		roleSelectSalary := discordgo.SelectMenu{
-			CustomID:    "sel_role_stipendio_choice",
-			Placeholder: "Seleziona un ruolo dal server (@)...",
-			MenuType:    discordgo.RoleSelectMenu,
+		btnAddSalario := discordgo.Button{
+			Label:    "➕ Imposta Stipendio Ruolo",
+			Style:    discordgo.SuccessButton,
+			CustomID: "btn_trigger_add_salary_modal",
+			Emoji:    &discordgo.ComponentEmoji{Name: "💸"},
 		}
 
-		btnListSalario := discordgo.Button{Label: "📋 Lista Stipendi Configurati", Style: discordgo.SecondaryButton, CustomID: "btn_config_stipendio_list"}
+		btnListSalario := discordgo.Button{
+			Label:    "📋 Lista Stipendi Configurati",
+			Style:    discordgo.SecondaryButton,
+			CustomID: "btn_config_stipendio_list",
+			Emoji:    &discordgo.ComponentEmoji{Name: "📑"},
+		}
 
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "⚙️ **CONFIGURAZIONE STIPENDI BUSTA PAGA:**\nScegli un ruolo dal menu a tendina qui sotto per associargli uno stipendio o visualizza la lista completa:",
+				Content: "⚙️ **CONFIGURAZIONE STIPENDI BUSTA PAGA:**\nScegli un'opzione per associare uno stipendio ad un ruolo inserendone la menzione/ID o per consultare l'elenco dei ruoli salvati:",
 				Flags:   discordgo.MessageFlagsEphemeral,
 				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{roleSelectSalary}},
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnListSalario}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnAddSalario, btnListSalario}},
 				},
 			},
 		})
 		return
 	}
 
-	// Quando selezioni un ruolo dal menu a tendina nativo per lo stipendio
-	if customID == "sel_role_stipendio_choice" {
-		values := i.MessageComponentData().Values
-		if len(values) > 0 {
-			selectedRoleID := values[0]
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseModal,
-				Data: &discordgo.InteractionResponseData{
-					CustomID: "modal_config_stipendio_" + selectedRoleID,
-					Title:    "Imposta Cifra Stipendio",
-					Components: []discordgo.MessageComponent{
-						discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_amount", Label: "Stipendio Settimanale in Euro (€)", Style: discordgo.TextInputShort, Placeholder: "Es. 2500", Required: true}}},
-					},
+	// Apre il Form Modale per inserire ID Ruolo e Cifra Stipendio
+	if customID == "btn_trigger_add_salary_modal" {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "modal_config_stipendio_direct",
+				Title:    "Configura Stipendio Ruolo",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_mention", Label: "Ruolo Discord (Menzione @Ruolo o ID)", Style: discordgo.TextInputShort, Placeholder: "Es. @Polizia o 1234567890", Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_amount", Label: "Stipendio Settimanale (€)", Style: discordgo.TextInputShort, Placeholder: "Es. 2500", Required: true}}},
 				},
-			})
-		}
+			},
+		})
 		return
 	}
 
@@ -503,7 +504,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		cfg := getOrCreateConfig("busta-paga")
 		text := "💼 **STIPENDI MULTIPLI CONFIGURATI NEL SERVER:**\n\n"
 		if len(cfg.RoleSalaries) == 0 {
-			text += "*Nessun ruolo specifico configurato. Gli utenti senza ruolo ricevono la paga base di € 800.*"
+			text += "*Nessun ruolo specifico configurato. Gli utenti senza ruolo specifico ricevono la paga base di € 800.*"
 		} else {
 			for rID, amt := range cfg.RoleSalaries {
 				text += fmt.Sprintf("• Ruolo: `<@&%s>` ➡️ **€ %d / settimana**\n", rID, amt)
@@ -845,11 +846,16 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	customID := i.ModalSubmitData().CustomID
 
-	// Registrazione stipendio da modale legato al ruolo scelto
-	if strings.HasPrefix(customID, "modal_config_stipendio_") {
-		roleID := strings.TrimPrefix(customID, "modal_config_stipendio_")
+	// Registrazione stipendio direttamente da Modale
+	if customID == "modal_config_stipendio_direct" {
 		data := i.ModalSubmitData()
-		amountStr := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+		roleInput := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+		amountStr := data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+
+		// Estrae l'ID pulito se l'utente incolla una menzione <@&123456789>
+		roleID := strings.TrimPrefix(roleInput, "<@&")
+		roleID = strings.TrimSuffix(roleID, ">")
+		roleID = strings.TrimSpace(roleID)
 
 		var amount int
 		_, err := fmt.Sscanf(amountStr, "%d", &amount)
@@ -867,7 +873,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("✅ **Stipendio configurato!** Al ruolo <@&%s> è stato assegnato uno stipendio di **€ %d** a settimana.", roleID, amount),
+				Content: fmt.Sprintf("✅ **Stipendio salvato!** Al ruolo <@&%s> è stato associato uno stipendio di **€ %d** a settimana.", roleID, amount),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
