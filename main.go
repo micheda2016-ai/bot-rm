@@ -228,7 +228,8 @@ func registerCommands(s *discordgo.Session) {
 	}
 
 	for _, cmd := range commands {
-		_, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd)
+		// Registrazione istantanea direttamente sul tuo server Discord specifico
+		_, err := s.ApplicationCommandCreate(s.State.User.ID, "1488262125708116198", cmd)
 		if err != nil {
 			log.Printf("Errore nella registrazione del comando '%s': %v", cmd.Name, err)
 		}
@@ -256,7 +257,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: fmt.Sprintf("❌ Non possiedi ancora un conto corrente registrato! Usa il pannello `/setup apri-conto` per aprirne uno."),
+					Content: "❌ Non possiedi ancora un conto corrente registrato! Usa il pannello `/setup apri-conto` per aprirne uno.",
 					Flags:   discordgo.MessageFlagsEphemeral,
 				},
 			})
@@ -1066,7 +1067,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("🎉 **Conto Corrente Aperto con Successo!** Ti sono stati accreditati **€ 7.000** di bonus benvenuto. Verifica il saldo con `/conto`."),
+				Content: "🎉 **Conto Corrente Aperto con Successo!** Ti sono stati accreditati **€ 7.000** di bonus benvenuto. Verifica il saldo con `/conto`.",
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
