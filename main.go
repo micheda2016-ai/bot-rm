@@ -13,15 +13,14 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// Struttura configurazione canali, ruoli e stipendi multipli
+// Struttura configurazione per servizio
 type ServerConfig struct {
 	PanelChannelID string
 	EsitiChannelID string
 	AuthRoleID     string
-	RoleSalaries   map[string]int // Mappa RoleID -> Importo Stipendio specifico
+	RoleSalaries   map[string]int // Mappa RoleID -> Importo Stipendio
 }
 
-// Strutture dati salvate nel database in memoria
 type BankAccount struct {
 	OwnerName  string
 	RobloxName string
@@ -59,7 +58,7 @@ var dbAnagrafe = make(map[string]AnagrafeRecord)
 var dbPortoDarmi = make(map[string]PortoDarmiRecord)
 var dbImmatricolazioni = make(map[string]ImmatricolazioneRecord)
 
-var defaultStipendio = 800 // Stipendio base se non ha ruoli configurati
+var defaultStipendio = 800
 
 func getOrCreateConfig(key string) *ServerConfig {
 	if serverConfigs[key] == nil {
@@ -166,7 +165,7 @@ func registerCommands(s *discordgo.Session) {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "busta-paga",
-					Description: "Invia il pannello per la riscossione dello stipendio",
+					Description: "Gestione completa e invio del pannello Busta Paga con stipendi per ruolo",
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -311,9 +310,54 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch subCmd {
 	case "server":
 		sendServerSetupPanel(s, i)
+	case "busta-paga":
+		sendBustaPagaSetupPanel(s, i)
 	default:
 		sendPanelPreview(s, i, subCmd)
 	}
+}
+
+// Menu /setup busta-paga con gestione stipendi per ruolo
+func sendBustaPagaSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	cfg := getOrCreateConfig("busta-paga")
+	targetChannel := cfg.PanelChannelID
+	var channelInfo string
+	if targetChannel == "" {
+		channelInfo = "⚠️ *Nessun canale impostato in `/setup server`. Verrà pubblicato nel canale attuale.*"
+	} else {
+		channelInfo = fmt.Sprintf("📍 *Canale di destinazione:* <#%s>", targetChannel)
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "💵 GESTIONE BUSTA PAGA & STIPENDI SETTIMANALI",
+		Description: fmt.Sprintf("Da questo pannello puoi inviare il bottone di riscossione o configurare gli stipendi associati ai ruoli del server.\n\n%s", channelInfo),
+		Color:       0xF1C40F,
+	}
+
+	btnInvia := discordgo.Button{
+		Label:    "Invia Pannello nel Canale",
+		Style:    discordgo.SuccessButton,
+		CustomID: "send_panel_to_channel_busta-paga",
+		Emoji:    &discordgo.ComponentEmoji{Name: "📨"},
+	}
+
+	btnConfigura := discordgo.Button{
+		Label:    "Configura Stipendi per Ruolo",
+		Style:    discordgo.PrimaryButton,
+		CustomID: "btn_open_busta_paga_config",
+		Emoji:    &discordgo.ComponentEmoji{Name: "⚙️"},
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Embeds: []*discordgo.MessageEmbed{embed},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnInvia, btnConfigura}},
+			},
+			Flags: discordgo.MessageFlagsEphemeral,
+		},
+	})
 }
 
 func sendPanelPreview(s *discordgo.Session, i *discordgo.InteractionCreate, serviceKey string) {
@@ -354,7 +398,7 @@ func sendPanelPreview(s *discordgo.Session, i *discordgo.InteractionCreate, serv
 func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
 		Title:       "⚙️ CONFIGURAZIONE GLOBALE COMANDI - ROME ITALY 2.0",
-		Description: "Seleziona dal menu a tendina il comando che vuoi configurare. Potrai scegliere i canali e i ruoli direttamente dalle liste di Discord:",
+		Description: "Seleziona dal menu a tendina il comando che vuoi configurare per impostare i canali e i ruoli autorizzati:",
 		Color:       0x0099FF,
 	}
 
@@ -366,7 +410,7 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 			{Label: "Porto d'Armi", Value: "porto-darmi", Description: "Imposta canali e ruoli per /porto-darmi", Emoji: &discordgo.ComponentEmoji{Name: "🔫"}},
 			{Label: "Apertura Conto Bancario", Value: "apri-conto", Description: "Imposta canali e ruoli per /apri-conto", Emoji: &discordgo.ComponentEmoji{Name: "💳"}},
 			{Label: "Bonifico Bancario", Value: "bonifico", Description: "Imposta canali e ruoli per /bonifico", Emoji: &discordgo.ComponentEmoji{Name: "💸"}},
-			{Label: "Riscossione Busta Paga", Value: "busta-paga", Description: "Configura stipendi multipli e canale per /busta-paga", Emoji: &discordgo.ComponentEmoji{Name: "💵"}},
+			{Label: "Riscossione Busta Paga", Value: "busta-paga", Description: "Imposta canali e ruoli per /busta-paga", Emoji: &discordgo.ComponentEmoji{Name: "💵"}},
 			{Label: "Immatricolazione Veicoli", Value: "immatricolazione", Description: "Imposta canali e ruoli per /immatricolazione", Emoji: &discordgo.ComponentEmoji{Name: "🚗"}},
 			{Label: "Registro Arresti FDO", Value: "registra-arresto", Description: "Imposta canali e ruoli per /registra-arresto", Emoji: &discordgo.ComponentEmoji{Name: "🚨"}},
 			{Label: "Emissione Multe", Value: "emetti-multa", Description: "Imposta canali e ruoli per /emetti-multa", Emoji: &discordgo.ComponentEmoji{Name: "📄"}},
@@ -389,6 +433,7 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	customID := i.MessageComponentData().CustomID
 
+	// Pressione bottone "Invia Pannello nel Canale"
 	if strings.HasPrefix(customID, "send_panel_to_channel_") {
 		serviceKey := strings.TrimPrefix(customID, "send_panel_to_channel_")
 
@@ -410,6 +455,68 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
+	// Pressione bottone "Configura Stipendi" in /setup busta-paga
+	if customID == "btn_open_busta_paga_config" {
+		// Menu a tendina nativo per selezionare i ruoli (@) del server
+		roleSelectSalary := discordgo.SelectMenu{
+			CustomID:    "sel_role_stipendio_choice",
+			Placeholder: "Seleziona un ruolo dal server (@)...",
+			MenuType:    discordgo.RoleSelectMenu,
+		}
+
+		btnListSalario := discordgo.Button{Label: "📋 Lista Stipendi Configurati", Style: discordgo.SecondaryButton, CustomID: "btn_config_stipendio_list"}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "⚙️ **CONFIGURAZIONE STIPENDI BUSTA PAGA:**\nScegli un ruolo dal menu a tendina qui sotto per associargli uno stipendio o visualizza la lista completa:",
+				Flags:   discordgo.MessageFlagsEphemeral,
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{roleSelectSalary}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnListSalario}},
+				},
+			},
+		})
+		return
+	}
+
+	// Quando selezioni un ruolo dal menu a tendina nativo per lo stipendio
+	if customID == "sel_role_stipendio_choice" {
+		values := i.MessageComponentData().Values
+		if len(values) > 0 {
+			selectedRoleID := values[0]
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseModal,
+				Data: &discordgo.InteractionResponseData{
+					CustomID: "modal_config_stipendio_" + selectedRoleID,
+					Title:    "Imposta Cifra Stipendio",
+					Components: []discordgo.MessageComponent{
+						discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_amount", Label: "Stipendio Settimanale in Euro (€)", Style: discordgo.TextInputShort, Placeholder: "Es. 2500", Required: true}}},
+					},
+				},
+			})
+		}
+		return
+	}
+
+	if customID == "btn_config_stipendio_list" {
+		cfg := getOrCreateConfig("busta-paga")
+		text := "💼 **STIPENDI MULTIPLI CONFIGURATI NEL SERVER:**\n\n"
+		if len(cfg.RoleSalaries) == 0 {
+			text += "*Nessun ruolo specifico configurato. Gli utenti senza ruolo ricevono la paga base di € 800.*"
+		} else {
+			for rID, amt := range cfg.RoleSalaries {
+				text += fmt.Sprintf("• Ruolo: `<@&%s>` ➡️ **€ %d / settimana**\n", rID, amt)
+			}
+		}
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: text, Flags: discordgo.MessageFlagsEphemeral},
+		})
+		return
+	}
+
+	// Approvazioni Staff (Sì/No)
 	if strings.HasPrefix(customID, "approve_yes_") || strings.HasPrefix(customID, "approve_no_") {
 		parts := strings.Split(customID, "_")
 		azione := parts[1]
@@ -447,39 +554,6 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// Gestione specifica per i 2 bottoni extra della Busta Paga nel Setup Server
-	if customID == "btn_config_stipendio_add" {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseModal,
-			Data: &discordgo.InteractionResponseData{
-				CustomID: "modal_config_stipendio",
-				Title:    "Configura Stipendio per Ruolo",
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_id", Label: "ID del Ruolo Discord (@)", Style: discordgo.TextInputShort, Placeholder: "Es. 123456789012345678", Required: true}}},
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_amount", Label: "Importo Stipendio Settimanale (€)", Style: discordgo.TextInputShort, Placeholder: "Es. 2500", Required: true}}},
-				},
-			},
-		})
-		return
-	}
-
-	if customID == "btn_config_stipendio_list" {
-		cfg := getOrCreateConfig("busta-paga")
-		text := "💼 **STIPENDI MULTIPLI CONFIGURATI NEL SERVER:**\n\n"
-		if len(cfg.RoleSalaries) == 0 {
-			text += "*Nessun ruolo specifico configurato. Verrà usato lo stipendio base di default.*"
-		} else {
-			for rID, amt := range cfg.RoleSalaries {
-				text += fmt.Sprintf("• Ruolo ID: `<@&%s>` ➡️ **€ %d**\n", rID, amt)
-			}
-		}
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{Content: text, Flags: discordgo.MessageFlagsEphemeral},
-		})
-		return
-	}
-
 	if customID == "setup_server_select" {
 		selectedCategory := "cittadinanza"
 		if len(i.MessageComponentData().Values) > 0 {
@@ -510,24 +584,16 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			MenuType:    discordgo.RoleSelectMenu,
 		}
 
-		// Se l'utente seleziona "busta-paga", aggiungiamo i 2 bottoni specifici per la gestione stipendi multipli
-		var components []discordgo.MessageComponent
-		components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{channelSelectPanel}})
-		components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{channelSelectEsiti}})
-		components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{roleSelectAuth}})
-
-		if selectedCategory == "busta-paga" {
-			btnAddSalario := discordgo.Button{Label: "➕ Aggiungi Ruolo e Stipendio", Style: discordgo.SuccessButton, CustomID: "btn_config_stipendio_add"}
-			btnListSalario := discordgo.Button{Label: "📋 Visualizza Stipendi", Style: discordgo.SecondaryButton, CustomID: "btn_config_stipendio_list"}
-			components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnAddSalario, btnListSalario}})
-		}
-
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content:    fmt.Sprintf("🛠️ **Configurazione per: %s**\nScegli i canali (`#`), il ruolo (`@`) o gestisci gli stipendi:", strings.ToUpper(selectedCategory)),
-				Flags:      discordgo.MessageFlagsEphemeral,
-				Components: components,
+				Content: fmt.Sprintf("🛠️ **Configurazione per: %s**\nScegli dai menu a tendina i canali (`#`) e il ruolo (`@`):", strings.ToUpper(selectedCategory)),
+				Flags:   discordgo.MessageFlagsEphemeral,
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{channelSelectPanel}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{channelSelectEsiti}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{roleSelectAuth}},
+				},
 			},
 		})
 		return
@@ -680,7 +746,6 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			return
 		}
 
-		// Controllo 1 volta a settimana (7 giorni)
 		if time.Since(account.LastPayday) < 7*24*time.Hour {
 			rimanente := (7 * 24 * time.Hour) - time.Since(account.LastPayday)
 			giorni := int(rimanente.Hours() / 24)
@@ -695,7 +760,6 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			return
 		}
 
-		// Calcolo stipendio in base alla configurazione del server (supporta più ruoli con stipendi diversi)
 		cfg := getOrCreateConfig("busta-paga")
 		stipendioAmount := defaultStipendio
 		
@@ -781,11 +845,11 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	customID := i.ModalSubmitData().CustomID
 
-	// Gestione salvataggio stipendio per ruolo tramite modale
-	if customID == "modal_config_stipendio" {
+	// Registrazione stipendio da modale legato al ruolo scelto
+	if strings.HasPrefix(customID, "modal_config_stipendio_") {
+		roleID := strings.TrimPrefix(customID, "modal_config_stipendio_")
 		data := i.ModalSubmitData()
-		roleID := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
-		amountStr := data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+		amountStr := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
 
 		var amount int
 		_, err := fmt.Sscanf(amountStr, "%d", &amount)
@@ -803,7 +867,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("✅ **Stipendio configurato con successo!** Al ruolo `<@&%s>` è stato assegnato uno stipendio di **€ %d**.", roleID, amount),
+				Content: fmt.Sprintf("✅ **Stipendio configurato!** Al ruolo <@&%s> è stato assegnato uno stipendio di **€ %d** a settimana.", roleID, amount),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
