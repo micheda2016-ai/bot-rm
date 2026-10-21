@@ -228,7 +228,6 @@ func registerCommands(s *discordgo.Session) {
 	}
 
 	for _, cmd := range commands {
-		// Registrazione istantanea direttamente sul tuo server Discord specifico
 		_, err := s.ApplicationCommandCreate(s.State.User.ID, "1488262125708116198", cmd)
 		if err != nil {
 			log.Printf("Errore nella registrazione del comando '%s': %v", cmd.Name, err)
