@@ -13,14 +13,14 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// Struttura configurazione per servizio
+// Configurazione canali e ruoli del server
 type ServerConfig struct {
 	PanelChannelID string
 	EsitiChannelID string
 	AuthRoleID     string
-	RoleSalaries   map[string]int // Mappa RoleID -> Importo Stipendio
 }
 
+// Database in memoria
 type BankAccount struct {
 	OwnerName  string
 	RobloxName string
@@ -51,20 +51,18 @@ type ImmatricolazioneRecord struct {
 	ModelloAuto string
 }
 
-// Database in memoria
 var serverConfigs = make(map[string]*ServerConfig)
 var userBankAccounts = make(map[string]BankAccount)
 var dbAnagrafe = make(map[string]AnagrafeRecord)
 var dbPortoDarmi = make(map[string]PortoDarmiRecord)
 var dbImmatricolazioni = make(map[string]ImmatricolazioneRecord)
 
-var defaultStipendio = 800
+// Stipendio fisso impostato a 3000 Euro
+var stipendioFisso = 3000
 
 func getOrCreateConfig(key string) *ServerConfig {
 	if serverConfigs[key] == nil {
-		serverConfigs[key] = &ServerConfig{
-			RoleSalaries: make(map[string]int),
-		}
+		serverConfigs[key] = &ServerConfig{}
 	}
 	return serverConfigs[key]
 }
@@ -120,7 +118,7 @@ func registerCommands(s *discordgo.Session) {
 	commands := []*discordgo.ApplicationCommand{
 		{
 			Name:        "conto",
-			Description: "Visualizza il saldo del tuo conto corrente bancario e la banca associata",
+			Description: "Visualizza il saldo del tuo conto corrente bancario",
 		},
 		{
 			Name:        "visualizza",
@@ -159,13 +157,8 @@ func registerCommands(s *discordgo.Session) {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "bonifico",
-					Description: "Invia il pannello per l'invio dei bonifici",
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "busta-paga",
-					Description: "Gestione e invio del pannello Busta Paga con configurazione stipendi per ruolo",
+					Description: "Invia il pannello per la riscossione dello stipendio settimanale",
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -190,7 +183,7 @@ func registerCommands(s *discordgo.Session) {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "emetti-multa",
-					Description: "Invia il pannello per emettere sanzioni stradali",
+					Description: "Invia il pannello per la sanzione stradale (verbale multa)",
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -230,7 +223,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: "❌ Non possiedi ancora un conto corrente registrato! Usa il pannello `/setup apri-conto` per aprirne uno.",
+					Content: fmt.Sprintf("❌ <@%s>, non possiedi ancora un conto corrente registrato! Usa il pannello `/setup apri-conto` per aprirne uno.", userID),
 					Flags:   discordgo.MessageFlagsEphemeral,
 				},
 			})
@@ -240,7 +233,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		embed := &discordgo.MessageEmbed{
 			Title:       "🏛️ ESTRATTO CONTO BANCARIO",
 			Color:       0x2ECC71,
-			Description: fmt.Sprintf("**Intestatario RP:** %s\n**Utente Roblox:** `@%s`\n**Istituto Bancario:** %s\n💰 **Saldo Disponibile:** `€ %d`", account.OwnerName, account.RobloxName, strings.ToUpper(account.BankName), account.Balance),
+			Description: fmt.Sprintf("**Utente Discord:** <@%s>\n**Intestatario RP:** %s\n**Utente Roblox:** `@%s`\n**Istituto Bancario:** %s\n💰 **Saldo Disponibile:** `€ %d`", userID, account.OwnerName, account.RobloxName, strings.ToUpper(account.BankName), account.Balance),
 		}
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -261,7 +254,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				text += "*Nessuna carta d'identità registrata.*"
 			} else {
 				for _, rec := range dbAnagrafe {
-					text += fmt.Sprintf("• **RP:** %s %s | **Roblox:** `@%s` | **Discord:** <@%s>\n", rec.NomeRP, rec.CognomeRP, rec.RobloxUser, rec.UserID)
+					text += fmt.Sprintf("• **Discord:** <@%s> | **RP:** %s %s | **Roblox:** `@%s`\n", rec.UserID, rec.NomeRP, rec.CognomeRP, rec.RobloxUser)
 				}
 			}
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -275,7 +268,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				text += "*Nessuna richiesta di porto d'armi.*"
 			} else {
 				for _, rec := range dbPortoDarmi {
-					text += fmt.Sprintf("• **RP:** %s | **Roblox:** `@%s` | **Motivazione:** %s\n", rec.NomeRP, rec.RobloxUser, rec.Motivazione)
+					text += fmt.Sprintf("• **Discord:** <@%s> | **RP:** %s | **Roblox:** `@%s` | **Motivazione:** %s\n", rec.UserID, rec.NomeRP, rec.RobloxUser, rec.Motivazione)
 				}
 			}
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -289,7 +282,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				text += "*Nessun veicolo immatricolato.*"
 			} else {
 				for _, rec := range dbImmatricolazioni {
-					text += fmt.Sprintf("• **Modello:** %s | **Targa:** `%s` | **Roblox:** `@%s`\n", rec.ModelloAuto, rec.Targa, rec.RobloxUser)
+					text += fmt.Sprintf("• **Discord:** <@%s> | **Modello:** %s | **Targa:** `%s` | **Roblox:** `@%s`\n", rec.UserID, rec.ModelloAuto, rec.Targa, rec.RobloxUser)
 				}
 			}
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -310,54 +303,9 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch subCmd {
 	case "server":
 		sendServerSetupPanel(s, i)
-	case "busta-paga":
-		sendBustaPagaSetupPanel(s, i)
 	default:
 		sendPanelPreview(s, i, subCmd)
 	}
-}
-
-// Menu /setup busta-paga con i 2 bottoni ben distinti
-func sendBustaPagaSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	cfg := getOrCreateConfig("busta-paga")
-	targetChannel := cfg.PanelChannelID
-	var channelInfo string
-	if targetChannel == "" {
-		channelInfo = "⚠️ *Nessun canale impostato in `/setup server`. Verrà pubblicato nel canale attuale.*"
-	} else {
-		channelInfo = fmt.Sprintf("📍 *Canale di destinazione:* <#%s>", targetChannel)
-	}
-
-	embed := &discordgo.MessageEmbed{
-		Title:       "💵 GESTIONE BUSTA PAGA & STIPENDI SETTIMANALI",
-		Description: fmt.Sprintf("Usa i pulsanti sottostanti per inviare il pannello pubblico o configurare gli stipendi dei ruoli del server.\n\n%s", channelInfo),
-		Color:       0xF1C40F,
-	}
-
-	btnInvia := discordgo.Button{
-		Label:    "Invia Pannello nel Canale",
-		Style:    discordgo.SuccessButton,
-		CustomID: "send_panel_to_channel_busta-paga",
-		Emoji:    &discordgo.ComponentEmoji{Name: "📨"},
-	}
-
-	btnConfigura := discordgo.Button{
-		Label:    "Configura Stipendi per Ruolo",
-		Style:    discordgo.PrimaryButton,
-		CustomID: "btn_open_busta_paga_config",
-		Emoji:    &discordgo.ComponentEmoji{Name: "⚙️"},
-	}
-
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Embeds: []*discordgo.MessageEmbed{embed},
-			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnInvia, btnConfigura}},
-			},
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
 }
 
 func sendPanelPreview(s *discordgo.Session, i *discordgo.InteractionCreate, serviceKey string) {
@@ -409,7 +357,6 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 			{Label: "Cittadinanza & Anagrafe", Value: "cittadinanza", Description: "Imposta canali e ruoli per /cittadinanza", Emoji: &discordgo.ComponentEmoji{Name: "🇮🇹"}},
 			{Label: "Porto d'Armi", Value: "porto-darmi", Description: "Imposta canali e ruoli per /porto-darmi", Emoji: &discordgo.ComponentEmoji{Name: "🔫"}},
 			{Label: "Apertura Conto Bancario", Value: "apri-conto", Description: "Imposta canali e ruoli per /apri-conto", Emoji: &discordgo.ComponentEmoji{Name: "💳"}},
-			{Label: "Bonifico Bancario", Value: "bonifico", Description: "Imposta canali e ruoli per /bonifico", Emoji: &discordgo.ComponentEmoji{Name: "💸"}},
 			{Label: "Riscossione Busta Paga", Value: "busta-paga", Description: "Imposta canali e ruoli per /busta-paga", Emoji: &discordgo.ComponentEmoji{Name: "💵"}},
 			{Label: "Immatricolazione Veicoli", Value: "immatricolazione", Description: "Imposta canali e ruoli per /immatricolazione", Emoji: &discordgo.ComponentEmoji{Name: "🚗"}},
 			{Label: "Registro Arresti FDO", Value: "registra-arresto", Description: "Imposta canali e ruoli per /registra-arresto", Emoji: &discordgo.ComponentEmoji{Name: "🚨"}},
@@ -455,68 +402,6 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// Pressione bottone "Configura Stipendi" dentro /setup busta-paga
-	if customID == "btn_open_busta_paga_config" {
-		btnAddSalario := discordgo.Button{
-			Label:    "➕ Imposta Stipendio Ruolo",
-			Style:    discordgo.SuccessButton,
-			CustomID: "btn_trigger_add_salary_modal",
-			Emoji:    &discordgo.ComponentEmoji{Name: "💸"},
-		}
-
-		btnListSalario := discordgo.Button{
-			Label:    "📋 Lista Stipendi Configurati",
-			Style:    discordgo.SecondaryButton,
-			CustomID: "btn_config_stipendio_list",
-			Emoji:    &discordgo.ComponentEmoji{Name: "📑"},
-		}
-
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: "⚙️ **CONFIGURAZIONE STIPENDI BUSTA PAGA:**\nSeleziona un'opzione per impostare gli stipendi o visualizzare la lista:",
-				Flags:   discordgo.MessageFlagsEphemeral,
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnAddSalario, btnListSalario}},
-				},
-			},
-		})
-		return
-	}
-
-	// Pressione bottone "Aggiungi Stipendio" che apre la modale diretta
-	if customID == "btn_trigger_add_salary_modal" {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseModal,
-			Data: &discordgo.InteractionResponseData{
-				CustomID: "modal_config_stipendio_direct",
-				Title:    "Configura Stipendio Ruolo",
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_mention", Label: "Ruolo Discord (Menzione @Ruolo o ID)", Style: discordgo.TextInputShort, Placeholder: "Es. @Polizia o 1234567890", Required: true}}},
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_role_amount", Label: "Stipendio Settimanale (€)", Style: discordgo.TextInputShort, Placeholder: "Es. 2500", Required: true}}},
-				},
-			},
-		})
-		return
-	}
-
-	if customID == "btn_config_stipendio_list" {
-		cfg := getOrCreateConfig("busta-paga")
-		text := "💼 **STIPENDI MULTIPLI CONFIGURATI NEL SERVER:**\n\n"
-		if len(cfg.RoleSalaries) == 0 {
-			text += "*Nessun ruolo specifico configurato. Gli utenti senza ruolo specifico ricevono la paga base di € 800.*"
-		} else {
-			for rID, amt := range cfg.RoleSalaries {
-				text += fmt.Sprintf("• Ruolo: `<@&%s>` ➡️ **€ %d / settimana**\n", rID, amt)
-			}
-		}
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{Content: text, Flags: discordgo.MessageFlagsEphemeral},
-		})
-		return
-	}
-
 	// Approvazioni Staff (Sì/No)
 	if strings.HasPrefix(customID, "approve_yes_") || strings.HasPrefix(customID, "approve_no_") {
 		parts := strings.Split(customID, "_")
@@ -547,9 +432,9 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		privateChannel, err := s.UserChannelCreate(targetUserID)
 		if err == nil {
 			if azione == "yes" {
-				s.ChannelMessageSend(privateChannel.ID, "🎉 La tua richiesta inviata nel server è stata **APPROVATA** dallo staff!")
+				s.ChannelMessageSend(privateChannel.ID, fmt.Sprintf("🎉 Salve <@%s>, la tua richiesta inviata nel server è stata **APPROVATA** dallo staff!", targetUserID))
 			} else {
-				s.ChannelMessageSend(privateChannel.ID, "❌ La tua richiesta inviata nel server è stata **RIFIUTATA** dallo staff.")
+				s.ChannelMessageSend(privateChannel.ID, fmt.Sprintf("❌ Salve <@%s>, la tua richiesta inviata nel server è stata **RIFIUTATA** dallo staff.", targetUserID))
 			}
 		}
 		return
@@ -652,7 +537,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "Scegli la banca con cui desideri aprire il conto corrente (riceverai subito **€ 7.000** di bonus):",
+				Content: fmt.Sprintf("Scegli la banca con cui desideri aprire il conto corrente, <@%s> (riceverai subito **€ 7.000** di bonus):", i.Member.User.ID),
 				Flags:   discordgo.MessageFlagsEphemeral,
 				Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{selectBanche}}},
 			},
@@ -733,6 +618,21 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			},
 		})
 
+	case "btn_emetti_multa":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "modal_emetti_multa",
+				Title:    "Sanzione Stradale / Verbale Multa",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_utente_multato", Label: "Utente Roblox Multato", Style: discordgo.TextInputShort, Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_importo_multa", Label: "Importo Multa in Euro (€)", Style: discordgo.TextInputShort, Placeholder: "150", Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_motivo_multa", Label: "Motivazione / Infrazione", Style: discordgo.TextInputParagraph, Placeholder: "Eccesso di velocità...", Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_targa_multa", Label: "Targa Veicolo (opzionale)", Style: discordgo.TextInputShort, Required: false}}},
+				},
+			},
+		})
+
 	case "btn_riscuoti_stipendio":
 		userID := i.Member.User.ID
 		account, exists := userBankAccounts[userID]
@@ -740,7 +640,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: "❌ Devi prima aprire un conto corrente bancario usando il pannello `/setup apri-conto` per poter riscuotere la busta paga!",
+					Content: fmt.Sprintf("❌ <@%s>, devi prima aprire un conto corrente bancario usando il pannello `/setup apri-conto` per poter riscuotere la busta paga!", userID),
 					Flags:   discordgo.MessageFlagsEphemeral,
 				},
 			})
@@ -754,31 +654,21 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: fmt.Sprintf("⏳ **Hai già riscosso la busta paga questa settimana!** Potrai riscuoterla nuovamente tra **%d giorni e %d ore**.", giorni, ore),
+					Content: fmt.Sprintf("⏳ <@%s>, **hai già riscosso la busta paga questa settimana!** Potrai riscuoterla nuovamente tra **%d giorni e %d ore**.", userID, giorni, ore),
 					Flags:   discordgo.MessageFlagsEphemeral,
 				},
 			})
 			return
 		}
 
-		cfg := getOrCreateConfig("busta-paga")
-		stipendioAmount := defaultStipendio
-		
-		for _, roleID := range i.Member.Roles {
-			if amount, ok := cfg.RoleSalaries[roleID]; ok {
-				stipendioAmount = amount
-				break
-			}
-		}
-
-		account.Balance += stipendioAmount
+		account.Balance += stipendioFisso
 		account.LastPayday = time.Now()
 		userBankAccounts[userID] = account
 
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("✅ **Busta Paga Riscossa con Successo!** Aggiunti **€ %d** al tuo conto corrente. Saldo totale: `€ %d`", stipendioAmount, account.Balance),
+				Content: fmt.Sprintf("✅ <@%s>, **Busta Paga Riscossa con Successo!** Ti sono stati accreditati **€ 3.000** sul tuo conto corrente. Saldo totale attuale: `€ %d`", userID, account.Balance),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -808,10 +698,10 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 	case "busta-paga":
 		embed := &discordgo.MessageEmbed{
 			Title:       "💼 RISCOSSIONE BUSTA PAGA - ROME ITALY 2.0",
-			Description: "Clicca sul bottone per riscuotere lo stipendio settimanale associato al tuo ruolo lavorativo.",
+			Description: "Clicca sul bottone qui sotto per riscuotere la tua busta paga settimanale di **€ 3.000** sul tuo conto corrente!",
 			Color:       0xF1C40F,
 		}
-		btn := discordgo.Button{Label: "Riscuoti Busta Paga", Style: discordgo.PrimaryButton, CustomID: "btn_riscuoti_stipendio", Emoji: &discordgo.ComponentEmoji{Name: "💵"}}
+		btn := discordgo.Button{Label: "Riscuoti Busta Paga (€ 3.000)", Style: discordgo.PrimaryButton, CustomID: "btn_riscuoti_stipendio", Emoji: &discordgo.ComponentEmoji{Name: "💵"}}
 		s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}, Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{btn}}}})
 
 	case "cittadinanza":
@@ -840,45 +730,20 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 		}
 		btn := discordgo.Button{Label: "Registra Arresto", Style: discordgo.DangerButton, CustomID: "btn_registra_arresto", Emoji: &discordgo.ComponentEmoji{Name: "📝"}}
 		s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}, Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{btn}}}})
+
+	case "emetti-multa":
+		embed := &discordgo.MessageEmbed{
+			Title:       "📄 POLIZIA LOCALE - EMISSIONE VERBALE MULTA",
+			Description: "Clicca sul bottone per emettere una sanzione stradale nei confronti di un cittadino.",
+			Color:       0xE74C3C,
+		}
+		btn := discordgo.Button{Label: "Emetti Multa", Style: discordgo.DangerButton, CustomID: "btn_emetti_multa", Emoji: &discordgo.ComponentEmoji{Name: "📄"}}
+		s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}, Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{btn}}}})
 	}
 }
 
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	customID := i.ModalSubmitData().CustomID
-
-	// Registrazione stipendio direttamente da Modale
-	if customID == "modal_config_stipendio_direct" {
-		data := i.ModalSubmitData()
-		roleInput := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
-		amountStr := data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
-
-		// Estrae l'ID pulito anche se viene incollata una menzione <@&123456789>
-		roleID := strings.TrimPrefix(roleInput, "<@&")
-		roleID = strings.TrimSuffix(roleID, ">")
-		roleID = strings.TrimSpace(roleID)
-
-		var amount int
-		_, err := fmt.Sscanf(amountStr, "%d", &amount)
-		if err != nil {
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{Content: "❌ Importo non valido! Inserisci un numero intero.", Flags: discordgo.MessageFlagsEphemeral},
-			})
-			return
-		}
-
-		cfg := getOrCreateConfig("busta-paga")
-		cfg.RoleSalaries[roleID] = amount
-
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("✅ **Stipendio salvato!** Al ruolo <@&%s> è stato associato uno stipendio di **€ %d** a settimana.", roleID, amount),
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
-		return
-	}
 
 	if strings.HasPrefix(customID, "modal_conferma_conto_") {
 		banca := strings.TrimPrefix(customID, "modal_conferma_conto_")
@@ -898,7 +763,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "🎉 **Conto Corrente Aperto con Successo!** Ti sono stati accreditati **€ 7.000** di bonus benvenuto. Verifica il saldo con `/conto`.",
+				Content: fmt.Sprintf("🎉 <@%s>, **Conto Corrente Aperto con Successo!** Ti sono stati accreditati **€ 7.000** di bonus benvenuto. Verifica il saldo con `/conto`.", userID),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -952,7 +817,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "📜 **Richiesta Porto d'Armi Inviata!** Sarà valutata dalle autorità.",
+				Content: fmt.Sprintf("📜 <@%s>, **Richiesta Porto d'Armi Inviata!** Sarà valutata dalle autorità.", userID),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -1010,7 +875,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "🇮🇹 **Richiesta Cittadinanza Registrata!** Inviata nel canale esiti.",
+				Content: fmt.Sprintf("🇮🇹 <@%s>, **Richiesta Cittadinanza Registrata!** Inviata nel canale esiti.", userID),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -1067,7 +932,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "🚗 **Immatricolazione Inviata!** Inserita nel registro PRA.",
+				Content: fmt.Sprintf("🚗 <@%s>, **Immatricolazione Inviata!** Inserita nel registro PRA.", userID),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -1141,7 +1006,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "🚨 **Verbale Registrato!** Inviato nel canale del registro ufficiale.",
+				Content: fmt.Sprintf("🚨 <@%s>, **Verbale Registrato!** Inviato nel canale del registro ufficiale.", userID),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -1152,6 +1017,61 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.ChannelMessageSendComplex(targetChannel, &discordgo.MessageSend{
 			Content: pingText,
 			Embeds:  []*discordgo.MessageEmbed{embedArresto},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnYes, btnNo}},
+			},
+		})
+
+	case "modal_emetti_multa":
+		data := i.ModalSubmitData()
+		utenteMultato := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+		importo := data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+		motivo := data.Components[2].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+		targa := data.Components[3].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+		userID := i.Member.User.ID
+
+		cfg := getOrCreateConfig("emetti-multa")
+		targetChannel := cfg.EsitiChannelID
+		if targetChannel == "" {
+			targetChannel = i.ChannelID
+		}
+
+		authRole := cfg.AuthRoleID
+		pingText := "@everyone"
+		if authRole != "" {
+			pingText = fmt.Sprintf("<@&%s>", authRole)
+		}
+
+		if targa == "" {
+			targa = "N/D"
+		}
+
+		embedMulta := &discordgo.MessageEmbed{
+			Title: "📄 SANZIONE STRADALE / VERBALE MULTA",
+			Color: 0xE74C3C,
+			Fields: []*discordgo.MessageEmbedField{
+				{Name: "Agente Discord", Value: fmt.Sprintf("<@%s>", userID), Inline: true},
+				{Name: "Cittadino Multato (Roblox)", Value: fmt.Sprintf("`@%s`", utenteMultato), Inline: true},
+				{Name: "Importo Multa", Value: fmt.Sprintf("€ %s", importo), Inline: true},
+				{Name: "Targa Veicolo", Value: fmt.Sprintf("`%s`", targa), Inline: true},
+				{Name: "Infrazione / Motivazione", Value: motivo, Inline: false},
+			},
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: fmt.Sprintf("📄 <@%s>, **Verbale di Multa Emetto e Registrato con Successo!**", userID),
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+
+		btnYes := discordgo.Button{Label: "Approva Multa (Sì)", Style: discordgo.SuccessButton, CustomID: "approve_yes_" + userID, Emoji: &discordgo.ComponentEmoji{Name: "✅"}}
+		btnNo := discordgo.Button{Label: "Annulla Multa (No)", Style: discordgo.DangerButton, CustomID: "approve_no_" + userID, Emoji: &discordgo.ComponentEmoji{Name: "❌"}}
+
+		s.ChannelMessageSendComplex(targetChannel, &discordgo.MessageSend{
+			Content: pingText,
+			Embeds:  []*discordgo.MessageEmbed{embedMulta},
 			Components: []discordgo.MessageComponent{
 				discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnYes, btnNo}},
 			},
