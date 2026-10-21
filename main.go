@@ -20,13 +20,29 @@ type ServerConfig struct {
 	AuthRoleID     string
 }
 
-// Database in memoria
+// Struttura per le Tasse Generali di Base
+type GeneralTaxes struct {
+	Conto          int
+	Veicoli        int
+	Immobili       int
+	IntervalDays   int    // Frequenza pagamento tasse in giorni
+	CustomDeadline string // Note sulla scadenza (es. "Entro la domenica")
+}
+
+// Struttura per le Tasse Personalizzate per Singolo Utente
+type UserTaxOverride struct {
+	Conto    int
+	Veicoli  int
+	Immobili int
+}
+
 type BankAccount struct {
-	OwnerName  string
-	RobloxName string
-	BankName   string
-	Balance    int
-	LastPayday time.Time
+	OwnerName   string
+	RobloxName  string
+	BankName    string
+	Balance     int
+	LastPayday  time.Time
+	LastTaxPaid time.Time // Traccia l'ultimo pagamento tasse effettuato
 }
 
 type AnagrafeRecord struct {
@@ -57,8 +73,20 @@ var dbAnagrafe = make(map[string]AnagrafeRecord)
 var dbPortoDarmi = make(map[string]PortoDarmiRecord)
 var dbImmatricolazioni = make(map[string]ImmatricolazioneRecord)
 
-// Stipendio fisso impostato a 3000 Euro
-var stipendioFisso = 3000
+// Configurazione Tasse Generali di default (Con frequenza di default a 7 giorni)
+var defaultTaxes = GeneralTaxes{
+	Conto:          100,
+	Veicoli:        200,
+	Immobili:       500,
+	IntervalDays:   7,
+	CustomDeadline: "Ogni 7 giorni",
+}
+
+// Mappa per le tasse personalizzate: UserID -> UserTaxOverride
+var userTaxOverrides = make(map[string]UserTaxOverride)
+
+// Stipendio fisso aggiornato a 12.000 Euro a settimana
+var stipendioFisso = 12000
 
 func getOrCreateConfig(key string) *ServerConfig {
 	if serverConfigs[key] == nil {
@@ -158,7 +186,7 @@ func registerCommands(s *discordgo.Session) {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "busta-paga",
-					Description: "Invia il pannello per la riscossione dello stipendio settimanale",
+					Description: "Invia il pannello per la riscossione dello stipendio settimanale (€ 12.000)",
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -184,6 +212,11 @@ func registerCommands(s *discordgo.Session) {
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "emetti-multa",
 					Description: "Invia il pannello per la sanzione stradale (verbale multa)",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "tasse",
+					Description: "Gestione completa del pannello tasse, aliquote e frequenza/tempo di pagamento",
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -303,9 +336,67 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch subCmd {
 	case "server":
 		sendServerSetupPanel(s, i)
+	case "tasse":
+		sendTasseSetupPanel(s, i)
 	default:
 		sendPanelPreview(s, i, subCmd)
 	}
+}
+
+func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	cfg := getOrCreateConfig("tasse")
+	targetChannel := cfg.PanelChannelID
+	var channelInfo string
+	if targetChannel == "" {
+		channelInfo = "⚠️ *Nessun canale impostato in `/setup server`. Verrà inviato in questo canale.*"
+	} else {
+		channelInfo = fmt.Sprintf("📍 *Canale di destinazione:* <#%s>", targetChannel)
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "🏛️ GESTIONE FISCALE, TASSE E TEMPI - ROME ITALY 2.0",
+		Description: fmt.Sprintf("Usa i pulsanti sottostanti per pubblicare il pannello, configurare gli importi delle tasse, i tempi di scadenza o le aliquote personalizzate ad personam.\n\n%s", channelInfo),
+		Color:       0x95A5A6,
+	}
+
+	btnInvia := discordgo.Button{
+		Label:    "Invia Pannello nel Canale",
+		Style:    discordgo.SuccessButton,
+		CustomID: "send_panel_to_channel_tasse",
+		Emoji:    &discordgo.ComponentEmoji{Name: "📨"},
+	}
+
+	btnConfigBase := discordgo.Button{
+		Label:    "⚙️ Tasse Generali",
+		Style:    discordgo.PrimaryButton,
+		CustomID: "btn_config_tasse_generali",
+		Emoji:    &discordgo.ComponentEmoji{Name: "⚙️"},
+	}
+
+	btnConfigTime := discordgo.Button{
+		Label:    "⏱️ Imposta Tempo / Frequenza",
+		Style:    discordgo.PrimaryButton,
+		CustomID: "btn_config_tasse_time",
+		Emoji:    &discordgo.ComponentEmoji{Name: "⏱️"},
+	}
+
+	btnConfigUser := discordgo.Button{
+		Label:    "👤 Tassa Personalizzata Utente",
+		Style:    discordgo.SecondaryButton,
+		CustomID: "btn_config_tasse_user",
+		Emoji:    &discordgo.ComponentEmoji{Name: "👤"},
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Embeds: []*discordgo.MessageEmbed{embed},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{btnInvia, btnConfigBase, btnConfigTime, btnConfigUser}},
+			},
+			Flags: discordgo.MessageFlagsEphemeral,
+		},
+	})
 }
 
 func sendPanelPreview(s *discordgo.Session, i *discordgo.InteractionCreate, serviceKey string) {
@@ -361,6 +452,7 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 			{Label: "Immatricolazione Veicoli", Value: "immatricolazione", Description: "Imposta canali e ruoli per /immatricolazione", Emoji: &discordgo.ComponentEmoji{Name: "🚗"}},
 			{Label: "Registro Arresti FDO", Value: "registra-arresto", Description: "Imposta canali e ruoli per /registra-arresto", Emoji: &discordgo.ComponentEmoji{Name: "🚨"}},
 			{Label: "Emissione Multe", Value: "emetti-multa", Description: "Imposta canali e ruoli per /emetti-multa", Emoji: &discordgo.ComponentEmoji{Name: "📄"}},
+			{Label: "Tasse e Fisco", Value: "tasse", Description: "Imposta canali e ruoli per /tasse", Emoji: &discordgo.ComponentEmoji{Name: "🏛️"}},
 			{Label: "Staff & Moderazione Panel", Value: "staff-panel", Description: "Imposta canali e ruoli per /staff-panel", Emoji: &discordgo.ComponentEmoji{Name: "🛡️"}},
 		},
 	}
@@ -397,6 +489,54 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Data: &discordgo.InteractionResponseData{
 				Content: fmt.Sprintf("✅ **Pannello inviato con successo nel canale <#%s>!**", targetChannel),
 				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	if customID == "btn_config_tasse_generali" {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "modal_config_tasse_base",
+				Title:    "Configura Tasse Generali Base",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_conto", Label: "Tassa Conto Corrente (€)", Style: discordgo.TextInputShort, Value: fmt.Sprintf("%d", defaultTaxes.Conto), Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_veicoli", Label: "Tassa Veicoli / Bollo Auto (€)", Style: discordgo.TextInputShort, Value: fmt.Sprintf("%d", defaultTaxes.Veicoli), Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_immobili", Label: "Tassa Immobili / Proprietà (€)", Style: discordgo.TextInputShort, Value: fmt.Sprintf("%d", defaultTaxes.Immobili), Required: true}}},
+				},
+			},
+		})
+		return
+	}
+
+	if customID == "btn_config_tasse_time" {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "modal_config_tasse_time",
+				Title:    "Imposta Tempo e Scadenza Tasse",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_days", Label: "Ogni quanti giorni pagare le tasse?", Style: discordgo.TextInputShort, Value: fmt.Sprintf("%d", defaultTaxes.IntervalDays), Placeholder: "Es. 7 per pagarle ogni settimana", Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_deadline_note", Label: "Note/Scadenza (es. Entro Domenica)", Style: discordgo.TextInputShort, Value: defaultTaxes.CustomDeadline, Placeholder: "Es. Da pagare ogni Domenica sera", Required: true}}},
+				},
+			},
+		})
+		return
+	}
+
+	if customID == "btn_config_tasse_user" {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "modal_config_tasse_user",
+				Title:    "Tassa Personalizzata per Utente",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_user_mention", Label: "Utente Discord (@Menzione o ID)", Style: discordgo.TextInputShort, Placeholder: "Es. @Gigetto o 123456789", Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_u_conto", Label: "Tassa Conto (€)", Style: discordgo.TextInputShort, Placeholder: "100", Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_u_veicoli", Label: "Tassa Veicoli (€)", Style: discordgo.TextInputShort, Placeholder: "2000", Required: true}}},
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{CustomID: "input_tax_u_immobili", Label: "Tassa Immobili (€)", Style: discordgo.TextInputShort, Placeholder: "5000", Required: true}}},
+				},
 			},
 		})
 		return
@@ -520,6 +660,102 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	switch customID {
+	case "btn_paga_tasse":
+		userID := i.Member.User.ID
+		account, exists := userBankAccounts[userID]
+		if !exists {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: fmt.Sprintf("❌ <@%s>, devi prima aprire un conto corrente bancario usando `/setup apri-conto` per poter versare le tasse!", userID),
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		// Controllo del tempo trascorso dall'ultimo versamento delle tasse
+		taxInterval := time.Duration(defaultTaxes.IntervalDays) * 24 * time.Hour
+		if taxInterval > 0 && time.Since(account.LastTaxPaid) < taxInterval {
+			rimanente := taxInterval - time.Since(account.LastTaxPaid)
+			giorni := int(rimanente.Hours() / 24)
+			ore := int(int(rimanente.Hours()) % 24)
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: fmt.Sprintf("⏳ <@%s>, **hai già saldato le tasse per questo periodo!**\nPotrai versarle nuovamente tra **%d giorni e %d ore**.\n📌 *Note Scadenza:* %s", userID, giorni, ore, defaultTaxes.CustomDeadline),
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		taxConto := defaultTaxes.Conto
+		taxVeicoli := defaultTaxes.Veicoli
+		taxImmobili := defaultTaxes.Immobili
+		isPersonalized := false
+
+		if override, hasOverride := userTaxOverrides[userID]; hasOverride {
+			taxConto = override.Conto
+			taxVeicoli = override.Veicoli
+			taxImmobili = override.Immobili
+			isPersonalized = true
+		}
+
+		totaleTasse := taxConto + taxVeicoli + taxImmobili
+
+		if account.Balance < totaleTasse {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: fmt.Sprintf("⚠️ <@%s>, **saldo insufficiente sul conto bancario!** Totale tasse da saldare: **€ %d**, Saldo attuale: `€ %d`.", userID, totaleTasse, account.Balance),
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		account.Balance -= totaleTasse
+		account.LastTaxPaid = time.Now()
+		userBankAccounts[userID] = account
+
+		tipoAliquota := "Generale Standard"
+		if isPersonalized {
+			tipoAliquota = "Personalizzata Ad Personam"
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: fmt.Sprintf("🏛️ <@%s>, **Tasse Versate con Successo!**\n• Conto Corrente: € %d\n• Bollo Veicoli: € %d\n• Tassa Immobili: € %d\n💰 **Totale Detratto:** `€ %d` | Nuovo Saldo: `€ %d`", userID, taxConto, taxVeicoli, taxImmobili, totaleTasse, account.Balance),
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+
+		cfg := getOrCreateConfig("tasse")
+		targetChannel := cfg.EsitiChannelID
+		if targetChannel == "" {
+			targetChannel = i.ChannelID
+		}
+
+		embedEsito := &discordgo.MessageEmbed{
+			Title: "🏛️ RICEVUTA PAGAMENTO TASSE STATALI",
+			Color: 0x2ECC71,
+			Fields: []*discordgo.MessageEmbedField{
+				{Name: "Cittadino Discord", Value: fmt.Sprintf("<@%s>", userID), Inline: true},
+				{Name: "Tipo Aliquota", Value: tipoAliquota, Inline: true},
+				{Name: "Tassa Conto", Value: fmt.Sprintf("€ %d", taxConto), Inline: true},
+				{Name: "Tassa Veicoli", Value: fmt.Sprintf("€ %d", taxVeicoli), Inline: true},
+				{Name: "Tassa Immobili", Value: fmt.Sprintf("€ %d", taxImmobili), Inline: true},
+				{Name: "Totale Versato", Value: fmt.Sprintf("`€ %d`", totaleTasse), Inline: true},
+			},
+		}
+
+		s.ChannelMessageSendComplex(targetChannel, &discordgo.MessageSend{
+			Content: fmt.Sprintf("🏛️ Ricevuta registrata per <@%s>", userID),
+			Embeds:  []*discordgo.MessageEmbed{embedEsito},
+		})
+
 	case "btn_apri_conto":
 		selectBanche := discordgo.SelectMenu{
 			CustomID:    "select_banca_choice",
@@ -668,7 +904,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("✅ <@%s>, **Busta Paga Riscossa con Successo!** Ti sono stati accreditati **€ 3.000** sul tuo conto corrente. Saldo totale attuale: `€ %d`", userID, account.Balance),
+				Content: fmt.Sprintf("✅ <@%s>, **Busta Paga Riscossa con Successo!** Ti sono stati accreditati **€ 12.000** sul tuo conto corrente. Saldo totale attuale: `€ %d`", userID, account.Balance),
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -698,10 +934,10 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 	case "busta-paga":
 		embed := &discordgo.MessageEmbed{
 			Title:       "💼 RISCOSSIONE BUSTA PAGA - ROME ITALY 2.0",
-			Description: "Clicca sul bottone qui sotto per riscuotere la tua busta paga settimanale di **€ 3.000** sul tuo conto corrente!",
+			Description: "Clicca sul bottone qui sotto per riscuotere la tua busta paga settimanale di **€ 12.000** sul tuo conto corrente!",
 			Color:       0xF1C40F,
 		}
-		btn := discordgo.Button{Label: "Riscuoti Busta Paga (€ 3.000)", Style: discordgo.PrimaryButton, CustomID: "btn_riscuoti_stipendio", Emoji: &discordgo.ComponentEmoji{Name: "💵"}}
+		btn := discordgo.Button{Label: "Riscuoti Busta Paga (€ 12.000)", Style: discordgo.PrimaryButton, CustomID: "btn_riscuoti_stipendio", Emoji: &discordgo.ComponentEmoji{Name: "💵"}}
 		s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}, Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{btn}}}})
 
 	case "cittadinanza":
@@ -739,11 +975,84 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 		}
 		btn := discordgo.Button{Label: "Emetti Multa", Style: discordgo.DangerButton, CustomID: "btn_emetti_multa", Emoji: &discordgo.ComponentEmoji{Name: "📄"}}
 		s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}, Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{btn}}}})
+
+	case "tasse":
+		embed := &discordgo.MessageEmbed{
+			Title:       "🏛️ AGENZIA DELLE ENTRATE - PAGAMENTO TASSE STATALI",
+			Description: fmt.Sprintf("Clicca sul bottone sottostante per effettuare il versamento delle imposte statali sul conto corrente, sugli immobili e sui veicoli.\n\n📌 **Scadenza / Frequenza:** %s", defaultTaxes.CustomDeadline),
+			Color:       0x95A5A6,
+		}
+		btn := discordgo.Button{Label: "Paga Tasse Statali", Style: discordgo.SuccessButton, CustomID: "btn_paga_tasse", Emoji: &discordgo.ComponentEmoji{Name: "💸"}}
+		s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}, Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{btn}}}})
 	}
 }
 
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	customID := i.ModalSubmitData().CustomID
+
+	// Configurazione Tasse Base Generali
+	if customID == "modal_config_tasse_base" {
+		data := i.ModalSubmitData()
+		fmt.Sscanf(data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value, "%d", &defaultTaxes.Conto)
+		fmt.Sscanf(data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value, "%d", &defaultTaxes.Veicoli)
+		fmt.Sscanf(data.Components[2].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value, "%d", &defaultTaxes.Immobili)
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: fmt.Sprintf("✅ **Tasse Generali Aggiornate!**\n• Conto: € %d\n• Veicoli: € %d\n• Immobili: € %d", defaultTaxes.Conto, defaultTaxes.Veicoli, defaultTaxes.Immobili),
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	// Configurazione Frequenza / Tempo Tasse
+	if customID == "modal_config_tasse_time" {
+		data := i.ModalSubmitData()
+		fmt.Sscanf(data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value, "%d", &defaultTaxes.IntervalDays)
+		defaultTaxes.CustomDeadline = data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: fmt.Sprintf("✅ **Tempo Tasse Aggiornato!**\n• Frequenza Pagamento: Ogni **%d giorni**\n• Note Scadenza: *%s*", defaultTaxes.IntervalDays, defaultTaxes.CustomDeadline),
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	// Configurazione Tassa Personalizzata Utente (ad personam)
+	if customID == "modal_config_tasse_user" {
+		data := i.ModalSubmitData()
+		userMention := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+
+		targetUserID := strings.TrimPrefix(userMention, "<@")
+		targetUserID = strings.TrimPrefix(targetUserID, "!")
+		targetUserID = strings.TrimSuffix(targetUserID, ">")
+		targetUserID = strings.TrimSpace(targetUserID)
+
+		var c, v, im int
+		fmt.Sscanf(data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value, "%d", &c)
+		fmt.Sscanf(data.Components[2].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value, "%d", &v)
+		fmt.Sscanf(data.Components[3].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value, "%d", &im)
+
+		userTaxOverrides[targetUserID] = UserTaxOverride{
+			Conto:    c,
+			Veicoli:  v,
+			Immobili: im,
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: fmt.Sprintf("✅ **Tassa Personalizzata impostata per <@%s>!**\n• Conto: € %d\n• Veicoli: € %d\n• Immobili: € %d", targetUserID, c, v, im),
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
 
 	if strings.HasPrefix(customID, "modal_conferma_conto_") {
 		banca := strings.TrimPrefix(customID, "modal_conferma_conto_")
