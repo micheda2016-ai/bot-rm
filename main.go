@@ -16,7 +16,7 @@ import (
 )
 
 const guildID = "1488262125708116198"
-const adminRoleID = "1488923224434802808" // Ruolo Amministrazione per aggiungere soldi
+const adminRoleID = "1488923224434802808" // Ruolo Amministrazione
 
 // ---------------------------------------------------------------------------
 // STRUTTURE DATI
@@ -80,7 +80,7 @@ type UserWarnRecord struct {
 }
 
 // ---------------------------------------------------------------------------
-// DATI IN MEMORIA
+// MEMORIA DEL BOT
 // ---------------------------------------------------------------------------
 
 var mu sync.Mutex
@@ -104,7 +104,7 @@ var defaultTaxes = GeneralTaxes{
 var stipendioFisso = 13000
 
 // ---------------------------------------------------------------------------
-// HELPER
+// FUNZIONI DI SUPPORTO (HELPER)
 // ---------------------------------------------------------------------------
 
 func getOrCreateConfig(key string) *ServerConfig {
@@ -233,7 +233,7 @@ func hasAdminRole(member *discordgo.Member) bool {
 }
 
 // ---------------------------------------------------------------------------
-// MAIN & LOOPS
+// MAIN & SERVER HTTP (RENDER)
 // ---------------------------------------------------------------------------
 
 func main() {
@@ -242,6 +242,7 @@ func main() {
 		port = "10000"
 	}
 
+	// Server HTTP per mantenere il servizio attivo su Render
 	go func() {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintln(w, "Bot Rome Italy 2.0 Online!")
@@ -258,13 +259,13 @@ func main() {
 	token = strings.TrimSpace(token)
 
 	if token == "" {
-		log.Println("⚠️ ERRORE CRITICO: La variabile DISCORD_TOKEN è vuota!")
+		log.Println("⚠️ ERRORE CRITICO: La variabile DISCORD_TOKEN è vuota o non impostata!")
 		return
 	}
 
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
-		log.Fatalf("Errore creazione sessione: %v", err)
+		log.Fatalf("Errore creazione sessione Discord: %v", err)
 	}
 
 	dg.AddHandler(interactionHandler)
@@ -277,15 +278,17 @@ func main() {
 	log.Println("✅ Bot 'Rome Italy 2.0' avviato con successo!")
 	registerCommands(dg)
 
+	// Avvia il timer per il prelievo automatico delle tasse
 	go startTaxScheduler(dg)
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
 
-	log.Println("Arresto del bot...")
+	log.Println("Arresto del bot in corso...")
 }
 
+// Scheduler tasse automatico
 func startTaxScheduler(s *discordgo.Session) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
@@ -312,7 +315,7 @@ func startTaxScheduler(s *discordgo.Session) {
 					userBankAccounts[userID] = account
 
 					if ch, err := s.UserChannelCreate(userID); err == nil {
-						s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏛️ **AGENZIA DELLE ENTRATE:** Sono trascorsi %d giorni. Ti sono stati scalati automaticamente **€ %d** di tasse.\n💰 **Nuovo Saldo:** € %d", defaultTaxes.IntervalDays, totale, account.Balance))
+						s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏛️ **AGENZIA DELLE ENTRATE:** Sono trascorsi %d giorni. Ti sono stati scalati automaticamente **€ %d** di tasse dal conto.\n💰 **Nuovo Saldo:** € %d", defaultTaxes.IntervalDays, totale, account.Balance))
 					}
 				}
 			}
@@ -326,7 +329,7 @@ func startTaxScheduler(s *discordgo.Session) {
 // ---------------------------------------------------------------------------
 
 func registerCommands(s *discordgo.Session) {
-	staffPerm := int64(32) // Permesso Gestisci Server (Manage Guild)
+	staffPerm := int64(32) // Permesso Gestisci Server
 
 	setupSub := func(name, desc string) *discordgo.ApplicationCommandOption {
 		return &discordgo.ApplicationCommandOption{
@@ -379,7 +382,7 @@ func registerCommands(s *discordgo.Session) {
 		},
 		{
 			Name:                     "warn",
-			Description:              "Aggiunge o rimuove un warn a un utente (Staff)",
+			Description:              "Aggiunge o aggiorna il warn di un utente (Staff)",
 			DefaultMemberPermissions: &staffPerm,
 			Options: []*discordgo.ApplicationCommandOption{
 				{
@@ -412,28 +415,28 @@ func registerCommands(s *discordgo.Session) {
 			Description:              "Configura i pannelli interattivi e i canali del server",
 			DefaultMemberPermissions: &staffPerm,
 			Options: []*discordgo.ApplicationCommandOption{
-				setupSub("server", "Pannello generale per configurare canali (#) e ruoli (@)"),
+				setupSub("server", "Pannello generale per configurare canali e ruoli"),
 				setupSub("apri-conto", "Invia il pannello bancario per l'apertura del conto"),
-				setupSub("busta-paga", fmt.Sprintf("Invia il pannello per la busta paga settimanale (€ %d)", stipendioFisso)),
+				setupSub("busta-paga", fmt.Sprintf("Invia il pannello per la busta paga (€ %d)", stipendioFisso)),
 				setupSub("cittadinanza", "Invia il pannello anagrafe per la carta d'identità"),
 				setupSub("porto-darmi", "Invia il pannello per la richiesta del porto d'armi"),
 				setupSub("immatricolazione", "Invia il pannello PRA per immatricolare i veicoli"),
-				setupSub("registra-arresto", "Invia il pannello delle Forze dell'Ordine per registrare arresti"),
-				setupSub("emetti-multa", "Invia il pannello per la sanzione stradale (verbale multa)"),
-				setupSub("tasse", "Gestisci e invia il pannello tasse (conto, immatricolazione, immobili)"),
-				setupSub("staff-panel", "Invia il pannello riservato alla moderazione Staff"),
+				setupSub("registra-arresto", "Invia il pannello per registrare arresti"),
+				setupSub("emetti-multa", "Invia il pannello per le sanzioni stradali"),
+				setupSub("tasse", "Gestisci e invia il pannello tasse"),
+				setupSub("staff-panel", "Invia il pannello riservato alla moderazione"),
 			},
 		},
 	}
 
 	_, err := s.ApplicationCommandBulkOverwrite(s.State.User.ID, guildID, commands)
 	if err != nil {
-		log.Printf("Errore sovrascrittura comandi: %v", err)
+		log.Printf("Errore nella registrazione dei comandi: %v", err)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// HANDLER INTERAZIONI
+// GESTIONE INTERAZIONI
 // ---------------------------------------------------------------------------
 
 func interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -451,7 +454,7 @@ func interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 // ---------------------------------------------------------------------------
-// GESTIONE SLASH COMMANDS
+// ESECUZIONE COMANDI SLASH
 // ---------------------------------------------------------------------------
 
 func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -466,7 +469,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		userID := i.Member.User.ID
 		account, exists := userBankAccounts[userID]
 		if !exists {
-			respond(s, i, "❌ Non possiedi ancora un conto corrente registrato! Usa il pannello per aprirne uno.")
+			respond(s, i, "❌ Non possiedi ancora un conto corrente registrato! Usa il pannello della banca per aprirne uno.")
 			return
 		}
 
@@ -480,7 +483,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Title: "🏛️ ESTRATTO CONTO BANCARIO",
 			Color: 0x2ECC71,
 			Description: fmt.Sprintf(
-				"**Utente Discord:** <@%s>\n**Intestatario RP:** %s\n**Utente Roblox:** `@%s`\n**Istituto Bancario:** %s\n💰 **Saldo Disponibile:** `€ %d`\n\n"+
+				"**Utente Discord:** <@%s>\n**Intestatario RP:** %s\n**Utente Roblox:** `@%s`\n**Banca:** %s\n💰 **Saldo Disponibile:** `€ %d`\n\n"+
 					"🧾 **Le tue tasse (%s):**\n• Conto: € %d\n• Immatricolazione: € %d\n• Immobili: € %d\n**Totale:** € %d",
 				userID, account.OwnerName, account.RobloxName, strings.ToUpper(account.BankName), account.Balance,
 				tipo, t.Conto, t.Immatricolazione, t.Immobili, t.Conto+t.Immatricolazione+t.Immobili),
@@ -543,7 +546,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	if data.Name == "aggiungi-soldi" {
 		if !hasAdminRole(i.Member) {
-			respond(s, i, "❌ Non hai i permessi necessari (riservato all'Amministrazione).")
+			respond(s, i, "❌ Non hai i permessi necessari (comando riservato all'Amministrazione).")
 			return
 		}
 
@@ -643,7 +646,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 // ---------------------------------------------------------------------------
-// PANNELLI DI SETUP
+// PANNELLI DI CONFIGURAZIONE
 // ---------------------------------------------------------------------------
 
 func channelInfoText(key string) string {
@@ -755,7 +758,7 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 }
 
 // ---------------------------------------------------------------------------
-// GESTIONE COMPONENTI E NOTIFICHE DM
+// GESTIONE BOTTONI, MENU E NOTIFICHE DM DI APPROVAZIONE
 // ---------------------------------------------------------------------------
 
 func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -862,6 +865,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			},
 		})
 
+		// INVIO NOTIFICA IN DM AL CITTADINO
 		if ch, err := s.UserChannelCreate(targetUserID); err == nil {
 			if azione == "yes" {
 				s.ChannelMessageSend(ch.ID, "🎉 **Esito Modulo:** La tua richiesta nel server **Rome Italy 2.0** è stata **APPROVATA** dallo Staff!")
@@ -1054,7 +1058,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 // ---------------------------------------------------------------------------
-// PUBLISH PANELS
+// PUBBLICAZIONE PANNELLI PUBBLICI
 // ---------------------------------------------------------------------------
 
 func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey string) {
@@ -1125,7 +1129,7 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 }
 
 // ---------------------------------------------------------------------------
-// GESTIONE MODAL SUBMIT
+// GESTIONE MODAL SUBMIT (INVIO MODULI)
 // ---------------------------------------------------------------------------
 
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
