@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,10 +15,26 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	_ "modernc.org/sqlite"
 )
 
 const guildID = "1488262125708116198"
 const adminRoleID = "1488923224434802808" // Ruolo Amministrazione
+
+var db *sql.DB
+var mu sync.Mutex
+
+var serverConfigs = make(map[string]*ServerConfig)
+
+var defaultTaxes = GeneralTaxes{
+	Conto:            100,
+	Immatricolazione: 200,
+	Immobili:         500,
+	IntervalDays:     7,
+	CustomDeadline:   "Ogni 7 giorni",
+}
+
+var stipendioFisso = 13000
 
 // ---------------------------------------------------------------------------
 // STRUTTURE DATI
@@ -36,72 +54,77 @@ type GeneralTaxes struct {
 	CustomDeadline   string
 }
 
-type UserTaxOverride struct {
-	Conto            int
-	Immatricolazione int
-	Immobili         int
-}
-
 type BankAccount struct {
 	OwnerName   string
 	RobloxName  string
 	BankName    string
 	Balance     int
-	LastPayday  time.Time
-	LastTaxPaid time.Time
-}
-
-type AnagrafeRecord struct {
-	UserID      string
-	RobloxUser  string
-	NomeRP      string
-	CognomeRP   string
-	DataNascita string
-}
-
-type PortoDarmiRecord struct {
-	UserID      string
-	RobloxUser  string
-	NomeRP      string
-	Motivazione string
-}
-
-type ImmatricolazioneRecord struct {
-	UserID      string
-	RobloxUser  string
-	Targa       string
-	ModelloAuto string
-}
-
-type UserWarnRecord struct {
-	UserID string
-	Count  int
-	Reason string
+	LastPayday  string
+	LastTaxPaid string
 }
 
 // ---------------------------------------------------------------------------
-// MEMORIA DEL BOT
+// INIZIALIZZAZIONE DATABASE SQLITE (PERSISTENZA GLOBALE)
 // ---------------------------------------------------------------------------
 
-var mu sync.Mutex
+func initDatabase() {
+	var err error
+	db, err = sql.Open("sqlite", "./bot.db")
+	if err != nil {
+		log.Fatalf("❌ Errore apertura database SQLite: %v", err)
+	}
 
-var serverConfigs = make(map[string]*ServerConfig)
-var userBankAccounts = make(map[string]BankAccount)
-var dbAnagrafe = make(map[string]AnagrafeRecord)
-var dbPortoDarmi = make(map[string]PortoDarmiRecord)
-var dbImmatricolazioni = make(map[string]ImmatricolazioneRecord)
-var userTaxOverrides = make(map[string]UserTaxOverride)
-var userWarns = make(map[string]UserWarnRecord)
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS bank_accounts (user_id TEXT PRIMARY KEY, owner_name TEXT, roblox_name TEXT, bank_name TEXT, balance INTEGER, last_payday TEXT, last_tax_paid TEXT);`,
+		`CREATE TABLE IF NOT EXISTS warns (user_id TEXT PRIMARY KEY, count INTEGER, reason TEXT);`,
+		`CREATE TABLE IF NOT EXISTS anagrafe (user_id TEXT PRIMARY KEY, roblox_user TEXT, nome_rp TEXT, cognome_rp TEXT, data_nascita TEXT);`,
+		`CREATE TABLE IF NOT EXISTS porto_darmi (user_id TEXT PRIMARY KEY, roblox_user TEXT, nome_rp TEXT, motivazione TEXT);`,
+		`CREATE TABLE IF NOT EXISTS immatricolazioni (targa TEXT PRIMARY KEY, user_id TEXT, roblox_user TEXT, modello_auto TEXT);`,
+		`CREATE TABLE IF NOT EXISTS arresti (id INTEGER PRIMARY KEY AUTOINCREMENT, agente_id TEXT, arrestato_roblox TEXT, reati TEXT, pena TEXT, cauzione TEXT, data TEXT);`,
+		`CREATE TABLE IF NOT EXISTS multe (id INTEGER PRIMARY KEY AUTOINCREMENT, agente_id TEXT, multato_roblox TEXT, importo TEXT, motivo TEXT, targa TEXT, data TEXT);`,
+	}
 
-var defaultTaxes = GeneralTaxes{
-	Conto:            100,
-	Immatricolazione: 200,
-	Immobili:         500,
-	IntervalDays:     7,
-	CustomDeadline:   "Ogni 7 giorni",
+	for _, q := range queries {
+		if _, err = db.Exec(q); err != nil {
+			log.Fatalf("❌ Errore creazione tabelle SQLite: %v", err)
+		}
+	}
+	log.Println("✅ Database SQLite inizializzato e persistente!")
 }
 
-var stipendioFisso = 13000
+// ---------------------------------------------------------------------------
+// BLOXLINK & AVATAR HELPER
+// ---------------------------------------------------------------------------
+
+func getRobloxAvatar(robloxUsername string) string {
+	resp, err := http.Get(fmt.Sprintf("https://users.roblox.com/v1/users/search?keyword=%s&limit=1", robloxUsername))
+	if err != nil {
+		return "https://www.roblox.com/favicon.ico"
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data []struct {
+			Id int `json:"id"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) == nil && len(result.Data) > 0 {
+		userId := result.Data[0].Id
+		thumbResp, err := http.Get(fmt.Sprintf("https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=420x420&format=Png&isCircular=false", userId))
+		if err == nil {
+			defer thumbResp.Body.Close()
+			var thumbResult struct {
+				Data []struct {
+					ImageUrl string `json:"imageUrl"`
+				} `json:"data"`
+			}
+			if json.NewDecoder(thumbResp.Body).Decode(&thumbResult) == nil && len(thumbResult.Data) > 0 {
+				return thumbResult.Data[0].ImageUrl
+			}
+		}
+	}
+	return "https://www.roblox.com/favicon.ico"
+}
 
 // ---------------------------------------------------------------------------
 // FUNZIONI DI SUPPORTO (HELPER)
@@ -120,17 +143,6 @@ func parseEuro(s string) int {
 		return 0
 	}
 	return n
-}
-
-func getUserTaxes(userID string) (UserTaxOverride, bool) {
-	if o, ok := userTaxOverrides[userID]; ok {
-		return o, true
-	}
-	return UserTaxOverride{
-		Conto:            defaultTaxes.Conto,
-		Immatricolazione: defaultTaxes.Immatricolazione,
-		Immobili:         defaultTaxes.Immobili,
-	}, false
 }
 
 func truncate(s string, max int) string {
@@ -242,7 +254,6 @@ func main() {
 		port = "10000"
 	}
 
-	// Server HTTP per mantenere attivo il servizio su Render
 	go func() {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintln(w, "Bot Rome Italy 2.0 Online!")
@@ -253,7 +264,8 @@ func main() {
 		}
 	}()
 
-	// Lettura sicura del token dalle variabili d'ambiente di Render
+	initDatabase()
+
 	token := strings.TrimSpace(os.Getenv("DISCORD_TOKEN"))
 	token = strings.TrimPrefix(token, "Bot ")
 	token = strings.TrimSpace(token)
@@ -277,7 +289,6 @@ func main() {
 	log.Println("✅ Bot 'Rome Italy 2.0' avviato e connesso a Discord con successo!")
 	registerCommands(dg)
 
-	// Avvia il timer per il prelievo automatico delle tasse
 	go startTaxScheduler(dg)
 
 	sc := make(chan os.Signal, 1)
@@ -287,7 +298,6 @@ func main() {
 	log.Println("Arresto del bot in corso...")
 }
 
-// Scheduler tasse automatico
 func startTaxScheduler(s *discordgo.Session) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
@@ -297,27 +307,33 @@ func startTaxScheduler(s *discordgo.Session) {
 		interval := time.Duration(defaultTaxes.IntervalDays) * 24 * time.Hour
 		now := time.Now()
 
-		for userID, account := range userBankAccounts {
-			if account.LastTaxPaid.IsZero() {
-				account.LastTaxPaid = now
-				userBankAccounts[userID] = account
-				continue
-			}
+		rows, err := db.Query("SELECT user_id, owner_name, roblox_name, bank_name, balance, last_payday, last_tax_paid FROM bank_accounts")
+		if err == nil {
+			for rows.Next() {
+				var userID string
+				var acc BankAccount
+				var lastTaxStr string
+				if rows.Scan(&userID, &acc.OwnerName, &acc.RobloxName, &acc.BankName, &acc.Balance, &acc.LastPayday, &lastTaxStr) == nil {
+					lastTax, _ := time.Parse(time.RFC3339, lastTaxStr)
+					if lastTax.IsZero() {
+						db.Exec("UPDATE bank_accounts SET last_tax_paid = ? WHERE user_id = ?", now.Format(time.RFC3339), userID)
+						continue
+					}
 
-			if now.Sub(account.LastTaxPaid) >= interval {
-				t, _ := getUserTaxes(userID)
-				totale := t.Conto + t.Immatricolazione + t.Immobili
+					if now.Sub(lastTax) >= interval {
+						totale := defaultTaxes.Conto + defaultTaxes.Immatricolazione + defaultTaxes.Immobili
+						if acc.Balance >= totale {
+							acc.Balance -= totale
+							db.Exec("UPDATE bank_accounts SET balance = ?, last_tax_paid = ? WHERE user_id = ?", acc.Balance, now.Format(time.RFC3339), userID)
 
-				if account.Balance >= totale {
-					account.Balance -= totale
-					account.LastTaxPaid = now
-					userBankAccounts[userID] = account
-
-					if ch, err := s.UserChannelCreate(userID); err == nil {
-						s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏛️ **AGENZIA DELLE ENTRATE:** Sono trascorsi %d giorni. Ti sono stati scalati automaticamente **€ %d** di tasse dal conto.\n💰 **Nuovo Saldo:** € %d", defaultTaxes.IntervalDays, totale, account.Balance))
+							if ch, err := s.UserChannelCreate(userID); err == nil {
+								s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏛️ **AGENZIA DELLE ENTRATE:** Ti sono stati scalati **€ %d** di tasse.\n💰 Saldo residuo: € %d", totale, acc.Balance))
+							}
+						}
 					}
 				}
 			}
+			rows.Close()
 		}
 		mu.Unlock()
 	}
@@ -328,7 +344,7 @@ func startTaxScheduler(s *discordgo.Session) {
 // ---------------------------------------------------------------------------
 
 func registerCommands(s *discordgo.Session) {
-	staffPerm := int64(32) // Permesso Gestisci Server
+	staffPerm := int64(32)
 
 	setupSub := func(name, desc string) *discordgo.ApplicationCommandOption {
 		return &discordgo.ApplicationCommandOption{
@@ -347,55 +363,61 @@ func registerCommands(s *discordgo.Session) {
 			Name:        "bonifico",
 			Description: "Invia un bonifico in denaro a un altro cittadino",
 			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "destinatario",
-					Description: "L'utente a cui inviare i soldi",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionInteger,
-					Name:        "importo",
-					Description: "La cifra in euro da inviare",
-					Required:    true,
-				},
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "destinatario", Description: "L'utente a cui inviare i soldi", Required: true},
+				{Type: discordgo.ApplicationCommandOptionInteger, Name: "importo", Description: "La cifra in euro da inviare", Required: true},
 			},
 		},
 		{
 			Name:        "aggiungi-soldi",
 			Description: "Aggiunge soldi sul conto di un utente (Solo Amministrazione)",
 			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "utente",
-					Description: "L'utente a cui accreditare i soldi",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionInteger,
-					Name:        "importo",
-					Description: "La cifra in euro da aggiungere",
-					Required:    true,
-				},
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente a cui accreditare i soldi", Required: true},
+				{Type: discordgo.ApplicationCommandOptionInteger, Name: "importo", Description: "La cifra in euro da aggiungere", Required: true},
 			},
 		},
 		{
 			Name:                     "warn",
-			Description:              "Aggiunge o aggiorna il warn di un utente (Staff)",
+			Description:              "Emetti un warn ufficiale a un cittadino",
 			DefaultMemberPermissions: &staffPerm,
 			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "utente",
-					Description: "L'utente da warnare",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "motivo",
-					Description: "Motivo del warn",
-					Required:    true,
-				},
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente Discord da warnare", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "roblox", Description: "Nome utente Roblox", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo del warn", Required: true},
+			},
+		},
+		{
+			Name:                     "ban-game",
+			Description:              "Emetti un ban di gioco (Game Ban)",
+			DefaultMemberPermissions: &staffPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente Discord da bannare", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "roblox", Description: "Nome utente Roblox", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "motivo", Description: "Motivo del ban", Required: true},
+				{Type: discordgo.ApplicationCommandOptionInteger, Name: "giorni", Description: "Giorni di ban (0 per permaban)", Required: true},
+			},
+		},
+		{
+			Name:                     "database-polizia",
+			Description:              "Cerca lo storico di arresti e multe per un utente Roblox",
+			DefaultMemberPermissions: &staffPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{Type: discordgo.ApplicationCommandOptionString, Name: "roblox", Description: "Username Roblox da cercare", Required: true},
+			},
+		},
+		{
+			Name:                     "fedina-penale",
+			Description:              "Controlla la fedina penale completa di un utente",
+			DefaultMemberPermissions: &staffPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente Discord da verificare", Required: true},
+			},
+		},
+		{
+			Name:                     "visualizza-cittadinanza",
+			Description:              "Mostra la carta d'identità registrata di un utente",
+			DefaultMemberPermissions: &staffPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				{Type: discordgo.ApplicationCommandOptionUser, Name: "utente", Description: "L'utente Discord da controllare", Required: true},
 			},
 		},
 		{
@@ -466,33 +488,23 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	if data.Name == "conto" {
 		userID := i.Member.User.ID
-		account, exists := userBankAccounts[userID]
-		if !exists {
+		var acc BankAccount
+		err := db.QueryRow("SELECT owner_name, roblox_name, bank_name, balance FROM bank_accounts WHERE user_id = ?", userID).Scan(&acc.OwnerName, &acc.RobloxName, &acc.BankName, &acc.Balance)
+		if err != nil {
 			respond(s, i, "❌ Non possiedi ancora un conto corrente registrato! Usa il pannello della banca per aprirne uno.")
 			return
-		}
-
-		t, personalized := getUserTaxes(userID)
-		tipo := "Generali"
-		if personalized {
-			tipo = "Personalizzate"
 		}
 
 		embed := &discordgo.MessageEmbed{
 			Title: "🏛️ ESTRATTO CONTO BANCARIO",
 			Color: 0x2ECC71,
 			Description: fmt.Sprintf(
-				"**Utente Discord:** <@%s>\n**Intestatario RP:** %s\n**Utente Roblox:** `@%s`\n**Banca:** %s\n💰 **Saldo Disponibile:** `€ %d`\n\n"+
-					"🧾 **Le tue tasse (%s):**\n• Conto: € %d\n• Immatricolazione: € %d\n• Immobili: € %d\n**Totale:** € %d",
-				userID, account.OwnerName, account.RobloxName, strings.ToUpper(account.BankName), account.Balance,
-				tipo, t.Conto, t.Immatricolazione, t.Immobili, t.Conto+t.Immatricolazione+t.Immobili),
+				"**Utente Discord:** <@%s>\n**Intestatario RP:** %s\n**Utente Roblox:** `@%s`\n**Banca:** %s\n💰 **Saldo Disponibile:** `€ %d`",
+				userID, acc.OwnerName, acc.RobloxName, strings.ToUpper(acc.BankName), acc.Balance),
 		}
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Embeds: []*discordgo.MessageEmbed{embed},
-				Flags:  discordgo.MessageFlagsEphemeral,
-			},
+			Data: &discordgo.InteractionResponseData{Embeds: []*discordgo.MessageEmbed{embed}, Flags: discordgo.MessageFlagsEphemeral},
 		})
 		return
 	}
@@ -506,96 +518,282 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			respond(s, i, "❌ L'importo del bonifico deve essere superiore a 0.")
 			return
 		}
-
 		if senderID == destUser.ID {
 			respond(s, i, "❌ Non puoi fare un bonifico a te stesso!")
 			return
 		}
 
-		senderAcc, senderExists := userBankAccounts[senderID]
-		if !senderExists {
+		var senderBal int
+		if db.QueryRow("SELECT balance FROM bank_accounts WHERE user_id = ?", senderID).Scan(&senderBal) != nil {
 			respond(s, i, "❌ Non hai un conto corrente attivo!")
 			return
 		}
-
-		destAcc, destExists := userBankAccounts[destUser.ID]
-		if !destExists {
+		var destBal int
+		if db.QueryRow("SELECT balance FROM bank_accounts WHERE user_id = ?", destUser.ID).Scan(&destBal) != nil {
 			respond(s, i, "❌ Il destinatario non possiede un conto corrente attivo.")
 			return
 		}
 
-		if senderAcc.Balance < importo {
-			respond(s, i, fmt.Sprintf("⚠️ **Saldo insufficiente!** Hai `€ %d`, ma vuoi inviare `€ %d`.", senderAcc.Balance, importo))
+		if senderBal < importo {
+			respond(s, i, fmt.Sprintf("⚠️ **Saldo insufficiente!** Hai `€ %d`, ma vuoi inviare `€ %d`.", senderBal, importo))
 			return
 		}
 
-		senderAcc.Balance -= importo
-		userBankAccounts[senderID] = senderAcc
+		db.Exec("UPDATE bank_accounts SET balance = balance - ? WHERE user_id = ?", importo, senderID)
+		db.Exec("UPDATE bank_accounts SET balance = balance + ? WHERE user_id = ?", importo, destUser.ID)
 
-		destAcc.Balance += importo
-		userBankAccounts[destUser.ID] = destAcc
-
-		respond(s, i, fmt.Sprintf("✅ **Bonifico Effettuato!** Inviati **€ %d** a <@%s>.\n💰 Saldo residuo: `€ %d`", importo, destUser.ID, senderAcc.Balance))
-
+		respond(s, i, fmt.Sprintf("✅ **Bonifico Effettuato!** Inviati **€ %d** a <@%s>.", importo, destUser.ID))
 		if ch, err := s.UserChannelCreate(destUser.ID); err == nil {
-			s.ChannelMessageSend(ch.ID, fmt.Sprintf("💸 **BONIFICO RICEVUTO:** Hai ricevuto un bonifico di **€ %d** da <@%s>.\n💰 Saldo attuale: `€ %d`", importo, senderID, destAcc.Balance))
+			s.ChannelMessageSend(ch.ID, fmt.Sprintf("💸 **BONIFICO RICEVUTO:** Hai ricevuto un bonifico di **€ %d** da <@%s>.", importo, senderID))
 		}
 		return
 	}
 
 	if data.Name == "aggiungi-soldi" {
 		if !hasAdminRole(i.Member) {
-			respond(s, i, "❌ Non hai i permessi necessari (comando riservato all'Amministrazione).")
+			respond(s, i, "❌ Non hai i permessi necessari.")
 			return
 		}
 
 		targetUser := data.Options[0].UserValue(s)
 		importo := int(data.Options[1].IntValue())
 
-		if importo <= 0 {
-			respond(s, i, "❌ L'importo deve essere superiore a 0.")
-			return
-		}
-
-		targetAcc, exists := userBankAccounts[targetUser.ID]
-		if !exists {
+		var dummy string
+		if db.QueryRow("SELECT user_id FROM bank_accounts WHERE user_id = ?", targetUser.ID).Scan(&dummy) != nil {
 			respond(s, i, "❌ L'utente specificato non possiede un conto corrente attivo.")
 			return
 		}
 
-		targetAcc.Balance += importo
-		userBankAccounts[targetUser.ID] = targetAcc
-
-		respond(s, i, fmt.Sprintf("✅ **Accredito Riuscito!** Aggiunti **€ %d** sul conto di <@%s>.\n💰 Nuovo saldo: `€ %d`", importo, targetUser.ID, targetAcc.Balance))
-
+		db.Exec("UPDATE bank_accounts SET balance = balance + ? WHERE user_id = ?", importo, targetUser.ID)
+		respond(s, i, fmt.Sprintf("✅ Aggiunti **€ %d** sul conto di <@%s>.", importo, targetUser.ID))
 		if ch, err := s.UserChannelCreate(targetUser.ID); err == nil {
-			s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏦 **ACCREDITO AMMINISTRAZIONE:** Ti sono stati accreditati **€ %d** sul conto corrente.\n💰 Saldo attuale: `€ %d`", importo, targetAcc.Balance))
+			s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏦 **ACCREDITO AMMINISTRAZIONE:** Ti sono stati accreditati **€ %d** sul conto.", importo))
 		}
 		return
 	}
 
 	if data.Name == "warn" {
 		targetUser := data.Options[0].UserValue(s)
-		reason := data.Options[1].StringValue()
+		robloxName := data.Options[1].StringValue()
+		reason := data.Options[2].StringValue()
 
-		w := userWarns[targetUser.ID]
-		w.UserID = targetUser.ID
-		w.Count++
-		w.Reason = reason
-		userWarns[targetUser.ID] = w
+		var count int
+		db.QueryRow("SELECT count FROM warns WHERE user_id = ?", targetUser.ID).Scan(&count)
+		count++
+		db.Exec("INSERT INTO warns (user_id, count, reason) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET count = ?, reason = ?", targetUser.ID, count, reason, count, reason)
 
-		msg := fmt.Sprintf("⚠️ Il signor <@%s> ha ricevuto un warn per: **%s**.\n📌 **Totale Warn Accumulati:** `%d`", targetUser.ID, reason, w.Count)
-		
+		avatarURL := getRobloxAvatar(robloxName)
+
+		embed := &discordgo.MessageEmbed{
+			Title:       "⚠️ NOTIFICA WARN UFFICIALE",
+			Color:       0xF1C40F,
+			Description: "Il cittadino ha ricevuto un richiamo ufficiale dallo Staff.",
+			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: avatarURL},
+			Fields: []*discordgo.MessageEmbedField{
+				{Name: "Nome Discord", Value: fmt.Sprintf("<@%s>", targetUser.ID), Inline: true},
+				{Name: "Nome Roblox", Value: fmt.Sprintf("`@%s`", robloxName), Inline: true},
+				{Name: "Motivo", Value: reason, Inline: false},
+				{Name: "Warn Totali", Value: strconv.Itoa(count), Inline: true},
+			},
+		}
+
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: msg,
-			},
+			Data: &discordgo.InteractionResponseData{Embeds: []*discordgo.MessageEmbed{embed}},
 		})
 
 		if ch, err := s.UserChannelCreate(targetUser.ID); err == nil {
-			s.ChannelMessageSend(ch.ID, fmt.Sprintf("⚠️ Sei stato warnato nel server Rome Italy 2.0 per: **%s**.\nAttualmente sei a quota **%d warn**.", reason, w.Count))
+			s.ChannelMessageSendComplex(ch.ID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}})
 		}
+		return
+	}
+
+	if data.Name == "ban-game" {
+		targetUser := data.Options[0].UserValue(s)
+		robloxName := data.Options[1].StringValue()
+		reason := data.Options[2].StringValue()
+		giorni := int(data.Options[3].IntValue())
+
+		durataStr := fmt.Sprintf("%d giorni", giorni)
+		if giorni == 0 {
+			durataStr = "Permanente (Permaban)"
+		}
+
+		avatarURL := getRobloxAvatar(robloxName)
+
+		embed := &discordgo.MessageEmbed{
+			Title:       "🔨 GAME BAN - PROVVEDIMENTO DISCIPLINARE",
+			Color:       0xE74C3C,
+			Description: "Sei stato bannato dall'esperienza di gioco di Roblox.",
+			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: avatarURL},
+			Fields: []*discordgo.MessageEmbedField{
+				{Name: "Nome Discord", Value: fmt.Sprintf("<@%s>", targetUser.ID), Inline: true},
+				{Name: "Nome Roblox", Value: fmt.Sprintf("`@%s`", robloxName), Inline: true},
+				{Name: "Motivazione", Value: reason, Inline: false},
+				{Name: "Durata", Value: durataStr, Inline: true},
+			},
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Embeds: []*discordgo.MessageEmbed{embed}},
+		})
+
+		if ch, err := s.UserChannelCreate(targetUser.ID); err == nil {
+			s.ChannelMessageSendComplex(ch.ID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}})
+		}
+		return
+	}
+
+	// ---------------------------------------------------------------------------
+	// NUOVI COMANDI POLIZIA & CITTADINANZA
+	// ---------------------------------------------------------------------------
+
+	if data.Name == "database-polizia" {
+		robloxName := data.Options[0].StringValue()
+		avatarURL := getRobloxAvatar(robloxName)
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("🚨 **BANCA DATI POLIZIA DI STATO / CARABINIERI**\n🔍 Storico per l'utente Roblox: `@%s`\n\n", robloxName))
+
+		// Ricerca Arresti
+		sb.WriteString("📌 **VERBALI D'ARRESTO:**\n")
+		rowsA, errA := db.Query("SELECT agente_id, reati, pena, cauzione, data FROM arresti WHERE LOWER(arrestato_roblox) = LOWER(?)", robloxName)
+		countArresti := 0
+		if errA == nil {
+			for rowsA.Next() {
+				countArresti++
+				var ag, reati, pena, cauz, dt string
+				rowsA.Scan(&ag, &reati, &pena, &cauz, &dt)
+				sb.WriteString(fmt.Sprintf("• [%s] Agente: <@%s> | **Reati:** %s | **Pena:** %s | **Cauzione:** €%s\n", dt, ag, reati, pena, cauz))
+			}
+			rowsA.Close()
+		}
+		if countArresti == 0 {
+			sb.WriteString(" *Nessun arresto presente negli archivi.*\n")
+		}
+
+		// Ricerca Multe
+		sb.WriteString("\n📄 **SANZIONI STRADALI (MULTE):**\n")
+		rowsM, errM := db.Query("SELECT agente_id, importo, motivo, targa, data FROM multe WHERE LOWER(multato_roblox) = LOWER(?)", robloxName)
+		countMulte := 0
+		if errM == nil {
+			for rowsM.Next() {
+				countMulte++
+				var ag, imp, mot, tar, dt string
+				rowsM.Scan(&ag, &imp, &mot, &tar, &dt)
+				sb.WriteString(fmt.Sprintf("• [%s] Agente: <@%s> | **Importo:** €%s | **Motivo:** %s | **Targa:** %s\n", dt, ag, imp, mot, tar))
+			}
+			rowsM.Close()
+		}
+		if countMulte == 0 {
+			sb.WriteString(" *Nessuna multa presente negli archivi.*\n")
+		}
+
+		embed := &discordgo.MessageEmbed{
+			Title:       "🚨 ARCHIVIO GIUDIZIARIO POLIZIA",
+			Color:       0x34495E,
+			Description: sb.String(),
+			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: avatarURL},
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Embeds: []*discordgo.MessageEmbed{embed}},
+		})
+		return
+	}
+
+	if data.Name == "fedina-penale" {
+		targetUser := data.Options[0].UserValue(s)
+
+		var robloxName string
+		db.QueryRow("SELECT roblox_user FROM anagrafe WHERE user_id = ?", targetUser.ID).Scan(&robloxName)
+		if robloxName == "" {
+			db.QueryRow("SELECT roblox_name FROM bank_accounts WHERE user_id = ?", targetUser.ID).Scan(&robloxName)
+		}
+
+		var warnCount int
+		var warnReason string
+		db.QueryRow("SELECT count, reason FROM warns WHERE user_id = ?", targetUser.ID).Scan(&warnCount, &warnReason)
+
+		var countArresti int
+		db.QueryRow("SELECT COUNT(*) FROM arresti WHERE agente_id = ? OR LOWER(arrestato_roblox) = LOWER(?)", targetUser.ID, robloxName).Scan(&countArresti)
+
+		var countMulte int
+		db.QueryRow("SELECT COUNT(*) FROM multe WHERE agente_id = ? OR LOWER(multato_roblox) = LOWER(?)", targetUser.ID, robloxName).Scan(&countMulte)
+
+		stato := "🟢 PULITA"
+		color := 0x2ECC71
+		if countArresti > 0 || warnCount >= 3 {
+			stato = "🔴 PREGIUDICATO / SPORCA"
+			color = 0xE74C3C
+		} else if countMulte > 0 || warnCount > 0 {
+			stato = "🟡 SEGNALATO"
+			color = 0xF1C40F
+		}
+
+		avatarURL := "https://www.roblox.com/favicon.ico"
+		if robloxName != "" {
+			avatarURL = getRobloxAvatar(robloxName)
+		}
+
+		embed := &discordgo.MessageEmbed{
+			Title:     "📜 ESTRATTO FEDINA PENALE",
+			Color:     color,
+			Thumbnail: &discordgo.MessageEmbedThumbnail{URL: avatarURL},
+			Fields: []*discordgo.MessageEmbedField{
+				{Name: "Cittadino", Value: fmt.Sprintf("<@%s>", targetUser.ID), Inline: true},
+				{Name: "Roblox User", Value: fmt.Sprintf("`@%s`", robloxName), Inline: true},
+				{Name: "Stato Giudiziario", Value: stato, Inline: true},
+				{Name: "Arresti Subiti", Value: strconv.Itoa(countArresti), Inline: true},
+				{Name: "Multe Ricevute", Value: strconv.Itoa(countMulte), Inline: true},
+				{Name: "Warn Accumulati", Value: strconv.Itoa(warnCount), Inline: true},
+			},
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Embeds: []*discordgo.MessageEmbed{embed}},
+		})
+		return
+	}
+
+	if data.Name == "visualizza-cittadinanza" {
+		targetUser := data.Options[0].UserValue(s)
+
+		var rec struct {
+			RobloxUser  string
+			NomeRP      string
+			CognomeRP   string
+			DataNascita string
+		}
+
+		err := db.QueryRow("SELECT roblox_user, nome_rp, cognome_rp, data_nascita FROM anagrafe WHERE user_id = ?", targetUser.ID).Scan(&rec.RobloxUser, &rec.NomeRP, &rec.CognomeRP, &rec.DataNascita)
+		if err != nil {
+			respond(s, i, "❌ Questo utente non possiede ancora una Carta d'Identità registrata nell'Anagrafe.")
+			return
+		}
+
+		avatarURL := getRobloxAvatar(rec.RobloxUser)
+
+		embed := &discordgo.MessageEmbed{
+			Title:     "🇮🇹 CARTA D'IDENTITÀ UFFICIALE - ROME ITALY 2.0",
+			Color:     0x3498DB,
+			Thumbnail: &discordgo.MessageEmbedThumbnail{URL: avatarURL},
+			Fields: []*discordgo.MessageEmbedField{
+				{Name: "Nome RP", Value: rec.NomeRP, Inline: true},
+				{Name: "Cognome RP", Value: rec.CognomeRP, Inline: true},
+				{Name: "Data di Nascita", Value: rec.DataNascita, Inline: true},
+				{Name: "Account Discord", Value: fmt.Sprintf("<@%s>", targetUser.ID), Inline: true},
+				{Name: "Account Roblox", Value: fmt.Sprintf("`@%s`", rec.RobloxUser), Inline: true},
+			},
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Embeds: []*discordgo.MessageEmbed{embed}},
+		})
 		return
 	}
 
@@ -608,24 +806,49 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		var sb strings.Builder
 		switch sub {
 		case "anagrafe":
-			sb.WriteString("📋 **LISTA CITTADINANZA / ANAGRAFE REGISTRATA:**\n\n")
-			for _, rec := range dbAnagrafe {
-				sb.WriteString(fmt.Sprintf("• <@%s> | **RP:** %s %s | **Roblox:** `@%s` | **Nato:** %s\n", rec.UserID, rec.NomeRP, rec.CognomeRP, rec.RobloxUser, rec.DataNascita))
+			sb.WriteString("📋 **LISTA CITTADINANZA / ANAGRAFE:**\n\n")
+			rows, _ := db.Query("SELECT user_id, roblox_user, nome_rp, cognome_rp, data_nascita FROM anagrafe")
+			if rows != nil {
+				for rows.Next() {
+					var uid, rob, nom, cog, nas string
+					rows.Scan(&uid, &rob, &nom, &cog, &nas)
+					sb.WriteString(fmt.Sprintf("• <@%s> | **RP:** %s %s | **Roblox:** `@%s` | **Nato:** %s\n", uid, nom, cog, rob, nas))
+				}
+				rows.Close()
 			}
 		case "porto-darmi":
-			sb.WriteString("🔫 **LISTA PORTO D'ARMI RICHIESTI:**\n\n")
-			for _, rec := range dbPortoDarmi {
-				sb.WriteString(fmt.Sprintf("• <@%s> | **RP:** %s | **Roblox:** `@%s` | **Motivazione:** %s\n", rec.UserID, rec.NomeRP, rec.RobloxUser, rec.Motivazione))
+			sb.WriteString("🔫 **LISTA PORTO D'ARMI:**\n\n")
+			rows, _ := db.Query("SELECT user_id, roblox_user, nome_rp, motivazione FROM porto_darmi")
+			if rows != nil {
+				for rows.Next() {
+					var uid, rob, nom, mot string
+					rows.Scan(&uid, &rob, &nom, &mot)
+					sb.WriteString(fmt.Sprintf("• <@%s> | **RP:** %s | **Roblox:** `@%s` | **Motivazione:** %s\n", uid, nom, rob, mot))
+				}
+				rows.Close()
 			}
 		case "immatricolazioni":
-			sb.WriteString("🚗 **LISTA VEICOLI IMMATRICOLATI (PRA):**\n\n")
-			for _, rec := range dbImmatricolazioni {
-				sb.WriteString(fmt.Sprintf("• <@%s> | **Modello:** %s | **Targa:** `%s` | **Roblox:** `@%s`\n", rec.UserID, rec.ModelloAuto, rec.Targa, rec.RobloxUser))
+			sb.WriteString("🚗 **LISTA VEICOLI (PRA):**\n\n")
+			rows, _ := db.Query("SELECT targa, user_id, roblox_user, modello_auto FROM immatricolazioni")
+			if rows != nil {
+				for rows.Next() {
+					var tar, uid, rob, mod string
+					rows.Scan(&tar, &uid, &rob, &mod)
+					sb.WriteString(fmt.Sprintf("• <@%s> | **Veicolo:** %s | **Targa:** `%s` | **Roblox:** `@%s`\n", uid, mod, tar, rob))
+				}
+				rows.Close()
 			}
 		case "warns":
-			sb.WriteString("⚠️ **LISTA UTENTI WARNATI:**\n\n")
-			for _, rec := range userWarns {
-				sb.WriteString(fmt.Sprintf("• <@%s> | **Warn Totali:** `%d` | **Ultimo motivo:** %s\n", rec.UserID, rec.Count, rec.Reason))
+			sb.WriteString("⚠️ **LISTA WARN UTENTI:**\n\n")
+			rows, _ := db.Query("SELECT user_id, count, reason FROM warns")
+			if rows != nil {
+				for rows.Next() {
+					var uid, reason string
+					var count int
+					rows.Scan(&uid, &count, &reason)
+					sb.WriteString(fmt.Sprintf("• <@%s> | **Warn:** `%d` | **Motivo:** %s\n", uid, count, reason))
+				}
+				rows.Close()
 			}
 		}
 		respond(s, i, truncate(sb.String(), 1900))
@@ -645,7 +868,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 // ---------------------------------------------------------------------------
-// PANNELLI DI CONFIGURAZIONE
+// PANNELLI DI CONFIGURAZIONE E INTERAZIONI BOTTONI
 // ---------------------------------------------------------------------------
 
 func channelInfoText(key string) string {
@@ -660,11 +883,9 @@ func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
 		Title: "🏛️ GESTIONE FISCALE E TASSE - ROME ITALY 2.0",
 		Description: fmt.Sprintf(
-			"**Tasse generali:**\n• Conto: € %d\n• Immatricolazione: € %d\n• Immobili: € %d\n• Frequenza: ogni %d giorni (%s)\n\n"+
-				"Utenti con tasse personalizzate: **%d**\n\n%s",
+			"**Tasse generali:**\n• Conto: € %d\n• Immatricolazione: € %d\n• Immobili: € %d\n• Frequenza: ogni %d giorni (%s)\n\n%s",
 			defaultTaxes.Conto, defaultTaxes.Immatricolazione, defaultTaxes.Immobili,
-			defaultTaxes.IntervalDays, defaultTaxes.CustomDeadline,
-			len(userTaxOverrides), channelInfoText("tasse")),
+			defaultTaxes.IntervalDays, defaultTaxes.CustomDeadline, channelInfoText("tasse")),
 		Color: 0x95A5A6,
 	}
 
@@ -673,16 +894,12 @@ func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		discordgo.Button{Label: "Tasse Generali", Style: discordgo.PrimaryButton, CustomID: "btn_config_tasse_generali", Emoji: &discordgo.ComponentEmoji{Name: "⚙️"}},
 		discordgo.Button{Label: "Frequenza", Style: discordgo.PrimaryButton, CustomID: "btn_config_tasse_time", Emoji: &discordgo.ComponentEmoji{Name: "⏱️"}},
 	}}
-	row2 := discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{Label: "Tassa Personalizzata", Style: discordgo.SecondaryButton, CustomID: "btn_config_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "👤"}},
-		discordgo.Button{Label: "Rimuovi Personalizzata", Style: discordgo.DangerButton, CustomID: "btn_reset_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "🗑️"}},
-	}}
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: []discordgo.MessageComponent{row1, row2},
+			Components: []discordgo.MessageComponent{row1},
 			Flags:      discordgo.MessageFlagsEphemeral,
 		},
 	})
@@ -756,10 +973,6 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	})
 }
 
-// ---------------------------------------------------------------------------
-// GESTIONE BOTTONI, MENU E NOTIFICHE DM DI APPROVAZIONE
-// ---------------------------------------------------------------------------
-
 func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	customID := i.MessageComponentData().CustomID
 	values := i.MessageComponentData().Values
@@ -794,47 +1007,6 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			inputRow("input_tax_deadline_note", "Note/Scadenza", discordgo.TextInputShort, defaultTaxes.CustomDeadline, "Es. Ogni settimana", true),
 		)
 		return
-
-	case "btn_config_tasse_user", "btn_reset_tasse_user":
-		prefix, text := "seluser_tasse", "👤 Scegli l'utente:"
-		if customID == "btn_reset_tasse_user" {
-			prefix, text = "seluserreset_tasse", "🗑️ Scegli l'utente a cui rimuovere la tassa:"
-		}
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: text,
-				Flags:   discordgo.MessageFlagsEphemeral,
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-						discordgo.SelectMenu{CustomID: prefix, Placeholder: "Seleziona utente...", MenuType: discordgo.UserSelectMenu},
-					}},
-				},
-			},
-		})
-		return
-
-	case "seluser_tasse":
-		if len(values) == 0 {
-			return
-		}
-		target := values[0]
-		t, _ := getUserTaxes(target)
-		openModal(s, i, "modal_tasse_user_"+target, "Tasse Personalizzate",
-			inputRow("u_conto", "Tassa Conto (€)", discordgo.TextInputShort, strconv.Itoa(t.Conto), "", true),
-			inputRow("u_imm", "Tassa Immatricolazione (€)", discordgo.TextInputShort, strconv.Itoa(t.Immatricolazione), "", true),
-			inputRow("u_immobili", "Tassa Immobili (€)", discordgo.TextInputShort, strconv.Itoa(t.Immobili), "", true),
-		)
-		return
-
-	case "seluserreset_tasse":
-		if len(values) == 0 {
-			return
-		}
-		target := values[0]
-		delete(userTaxOverrides, target)
-		respond(s, i, fmt.Sprintf("✅ Tassa personalizzata rimossa per <@%s>.", target))
-		return
 	}
 
 	if strings.HasPrefix(customID, "approve_yes_") || strings.HasPrefix(customID, "approve_no_") {
@@ -858,13 +1030,9 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: &discordgo.InteractionResponseData{
-				Embeds:     []*discordgo.MessageEmbed{&newEmbed},
-				Components: []discordgo.MessageComponent{},
-			},
+			Data: &discordgo.InteractionResponseData{Embeds: []*discordgo.MessageEmbed{&newEmbed}, Components: []discordgo.MessageComponent{}},
 		})
 
-		// INVIO NOTIFICA IN DM AL CITTADINO
 		if ch, err := s.UserChannelCreate(targetUserID); err == nil {
 			if azione == "yes" {
 				s.ChannelMessageSend(ch.ID, "🎉 **Esito Modulo:** La tua richiesta nel server **Rome Italy 2.0** è stata **APPROVATA** dallo Staff!")
@@ -922,44 +1090,35 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch customID {
 	case "btn_paga_tasse":
 		userID := i.Member.User.ID
-		account, exists := userBankAccounts[userID]
-		if !exists {
+		var balance int
+		err := db.QueryRow("SELECT balance FROM bank_accounts WHERE user_id = ?", userID).Scan(&balance)
+		if err != nil {
 			respond(s, i, "❌ Devi prima aprire un conto corrente!")
 			return
 		}
 
-		t, personalized := getUserTaxes(userID)
-		totale := t.Conto + t.Immatricolazione + t.Immobili
-
-		if account.Balance < totale {
-			respond(s, i, fmt.Sprintf("⚠️ **Saldo insufficiente!** Tasse: **€ %d**, saldo: `€ %d`.", totale, account.Balance))
+		totale := defaultTaxes.Conto + defaultTaxes.Immatricolazione + defaultTaxes.Immobili
+		if balance < totale {
+			respond(s, i, fmt.Sprintf("⚠️ **Saldo insufficiente!** Tasse: **€ %d**, saldo: `€ %d`.", totale, balance))
 			return
 		}
 
-		account.Balance -= totale
-		account.LastTaxPaid = time.Now()
-		userBankAccounts[userID] = account
-
-		tipo := "Generale Standard"
-		if personalized {
-			tipo = "Personalizzata"
-		}
-
-		respond(s, i, fmt.Sprintf("🏛️ **Tasse Versate!** Totale: `€ %d` | Nuovo Saldo: `€ %d`", totale, account.Balance))
+		db.Exec("UPDATE bank_accounts SET balance = balance - ?, last_tax_paid = ? WHERE user_id = ?", totale, time.Now().Format(time.RFC3339), userID)
+		respond(s, i, fmt.Sprintf("🏛️ **Tasse Versate!** Totale: `€ %d`", totale))
 
 		embedEsito := &discordgo.MessageEmbed{
 			Title: "🏛️ RICEVUTA PAGAMENTO TASSE STATALI",
 			Color: 0x2ECC71,
 			Fields: []*discordgo.MessageEmbedField{
 				{Name: "Cittadino", Value: fmt.Sprintf("<@%s>", userID), Inline: true},
-				{Name: "Tipo", Value: tipo, Inline: true},
 				{Name: "Totale", Value: fmt.Sprintf("`€ %d`", totale), Inline: true},
 			},
 		}
 		s.ChannelMessageSendComplex(esitiChannel("tasse", i.ChannelID), &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embedEsito}})
 
 	case "btn_apri_conto":
-		if _, exists := userBankAccounts[i.Member.User.ID]; exists {
+		var dummy string
+		if db.QueryRow("SELECT user_id FROM bank_accounts WHERE user_id = ?", i.Member.User.ID).Scan(&dummy) == nil {
 			respond(s, i, "❌ Hai già un conto corrente aperto!")
 			return
 		}
@@ -1035,30 +1194,15 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	case "btn_riscuoti_stipendio":
 		userID := i.Member.User.ID
-		account, exists := userBankAccounts[userID]
-		if !exists {
+		var dummy string
+		if db.QueryRow("SELECT user_id FROM bank_accounts WHERE user_id = ?", userID).Scan(&dummy) != nil {
 			respond(s, i, "❌ Devi prima aprire un conto corrente!")
 			return
 		}
-
-		week := 7 * 24 * time.Hour
-		if !account.LastPayday.IsZero() && time.Since(account.LastPayday) < week {
-			rim := week - time.Since(account.LastPayday)
-			respond(s, i, fmt.Sprintf("⏳ Hai già riscosso la busta paga! Riprova tra %d ore.", int(rim.Hours())))
-			return
-		}
-
-		account.Balance += stipendioFisso
-		account.LastPayday = time.Now()
-		userBankAccounts[userID] = account
-
-		respond(s, i, fmt.Sprintf("✅ **Busta Paga Riscossa!** +€ %d | Saldo: `€ %d`", stipendioFisso, account.Balance))
+		db.Exec("UPDATE bank_accounts SET balance = balance + ? WHERE user_id = ?", stipendioFisso, userID)
+		respond(s, i, fmt.Sprintf("✅ **Busta Paga Riscossa!** +€ %d", stipendioFisso))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// PUBBLICAZIONE PANNELLI PUBBLICI
-// ---------------------------------------------------------------------------
 
 func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey string) {
 	switch serviceKey {
@@ -1068,68 +1212,56 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 			Description: "Clicca per scegliere la banca e ricevere **€ 7.000** di bonus!",
 			Color:       0x2ECC71,
 		}, &discordgo.Button{Label: "Apri Conto Corrente", Style: discordgo.SuccessButton, CustomID: "btn_apri_conto", Emoji: &discordgo.ComponentEmoji{Name: "💳"}})
-
 	case "porto-darmi":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "🔫 RICHIESTA PORTO D'ARMI - ROME ITALY 2.0",
 			Description: "Invia la richiesta di licenza porto d'armi.",
 			Color:       0xE67E22,
 		}, &discordgo.Button{Label: "Richiedi Porto d'Armi", Style: discordgo.PrimaryButton, CustomID: "btn_richiedi_porto_darmi", Emoji: &discordgo.ComponentEmoji{Name: "📜"}})
-
 	case "busta-paga":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "💼 RISCOSSIONE BUSTA PAGA - ROME ITALY 2.0",
 			Description: fmt.Sprintf("Riscuoti la busta paga settimanale di **€ %d**!", stipendioFisso),
 			Color:       0xF1C40F,
 		}, &discordgo.Button{Label: fmt.Sprintf("Riscuoti Busta Paga (€ %d)", stipendioFisso), Style: discordgo.PrimaryButton, CustomID: "btn_riscuoti_stipendio", Emoji: &discordgo.ComponentEmoji{Name: "💵"}})
-
 	case "cittadinanza":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "🇮🇹 ANAGRAFE CENTRALE - ROME ITALY 2.0",
 			Description: "Richiedi la tua Carta d'Identità e la Cittadinanza ufficiali.",
 			Color:       0x3498DB,
 		}, &discordgo.Button{Label: "Richiedi Cittadinanza", Style: discordgo.PrimaryButton, CustomID: "btn_richiedi_cittadinanza", Emoji: &discordgo.ComponentEmoji{Name: "🆔"}})
-
 	case "immatricolazione":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "🚗 UFFICIO PRA - IMMATRICOLAZIONE VEICOLI",
 			Description: "Immatricola e registra il tuo veicolo nel server.",
 			Color:       0x9B59B6,
 		}, &discordgo.Button{Label: "Immatricola Veicolo", Style: discordgo.PrimaryButton, CustomID: "btn_immatricolazione", Emoji: &discordgo.ComponentEmoji{Name: "🚘"}})
-
 	case "registra-arresto":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "🚨 BANCA DATI POLIZIA DI STATO / CARABINIERI",
 			Description: "Compila il verbale dei fermi ed arresti.",
 			Color:       0xE74C3C,
 		}, &discordgo.Button{Label: "Registra Arresto", Style: discordgo.DangerButton, CustomID: "btn_registra_arresto", Emoji: &discordgo.ComponentEmoji{Name: "📝"}})
-
 	case "emetti-multa":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "📄 POLIZIA LOCALE - EMISSIONE VERBALE MULTA",
 			Description: "Emetti una sanzione stradale.",
 			Color:       0xE74C3C,
 		}, &discordgo.Button{Label: "Emetti Multa", Style: discordgo.DangerButton, CustomID: "btn_emetti_multa", Emoji: &discordgo.ComponentEmoji{Name: "📄"}})
-
 	case "tasse":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "🏛️ AGENZIA DELLE ENTRATE - PAGAMENTO TASSE STATALI",
 			Description: fmt.Sprintf("Versa le tue imposte.\n📌 **Frequenza:** %s", defaultTaxes.CustomDeadline),
 			Color:       0x95A5A6,
 		}, &discordgo.Button{Label: "Paga Tasse Statali", Style: discordgo.SuccessButton, CustomID: "btn_paga_tasse", Emoji: &discordgo.ComponentEmoji{Name: "💸"}})
-
 	case "staff-panel":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "🛡️ PANNELLO STAFF - ROME ITALY 2.0",
-			Description: "Comandi:\n• `/warn utente motivo`\n• `/bonifico destinatario importo`\n• `/aggiungi-soldi utente importo` (Admin)\n• `/visualizza`",
+			Description: "Comandi:\n• `/warn`\n• `/ban-game`\n• `/database-polizia`\n• `/fedina-penale`\n• `/visualizza-cittadinanza`\n• `/bonifico`\n• `/aggiungi-soldi` (Admin)\n• `/visualizza`",
 			Color:       0x2C3E50,
 		}, nil)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// GESTIONE MODAL SUBMIT (INVIO MODULI)
-// ---------------------------------------------------------------------------
 
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	data := i.ModalSubmitData()
@@ -1139,6 +1271,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 	userID := i.Member.User.ID
+	nowDate := time.Now().Format("02/01/2006 15:04")
 
 	if customID == "modal_config_tasse_base" {
 		defaultTaxes.Conto = parseEuro(modalVal(data, 0))
@@ -1159,29 +1292,13 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	if strings.HasPrefix(customID, "modal_tasse_user_") {
-		target := strings.TrimPrefix(customID, "modal_tasse_user_")
-		t := UserTaxOverride{
-			Conto:            parseEuro(modalVal(data, 0)),
-			Immatricolazione: parseEuro(modalVal(data, 1)),
-			Immobili:         parseEuro(modalVal(data, 2)),
-		}
-		userTaxOverrides[target] = t
-		respond(s, i, fmt.Sprintf("✅ **Tasse personalizzate aggiornate per <@%s>!**", target))
-		return
-	}
-
 	if strings.HasPrefix(customID, "modal_conferma_conto_") {
 		banca := strings.TrimPrefix(customID, "modal_conferma_conto_")
 		nomeRP := modalVal(data, 0)
 		robloxUser := modalVal(data, 1)
 
-		userBankAccounts[userID] = BankAccount{
-			OwnerName:  nomeRP,
-			RobloxName: robloxUser,
-			BankName:   banca,
-			Balance:    7000,
-		}
+		db.Exec("INSERT OR REPLACE INTO bank_accounts (user_id, owner_name, roblox_name, bank_name, balance, last_payday, last_tax_paid) VALUES (?, ?, ?, ?, 7000, ?, ?)",
+			userID, nomeRP, robloxUser, banca, time.Now().Format(time.RFC3339), time.Now().Format(time.RFC3339))
 
 		respond(s, i, "🎉 **Conto Aperto!** Hai ricevuto **€ 7.000** di bonus.")
 
@@ -1201,7 +1318,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		robloxUser := modalVal(data, 1)
 		motivazione := modalVal(data, 2)
 
-		dbPortoDarmi[userID] = PortoDarmiRecord{UserID: userID, RobloxUser: robloxUser, NomeRP: nomeRP, Motivazione: motivazione}
+		db.Exec("INSERT OR REPLACE INTO porto_darmi (user_id, roblox_user, nome_rp, motivazione) VALUES (?, ?, ?, ?)", userID, robloxUser, nomeRP, motivazione)
 		respond(s, i, "📜 **Richiesta Porto d'Armi Inviata!**")
 
 		embed := &discordgo.MessageEmbed{
@@ -1222,7 +1339,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		robloxUser := modalVal(data, 2)
 		dataNascita := modalVal(data, 3)
 
-		dbAnagrafe[userID] = AnagrafeRecord{UserID: userID, RobloxUser: robloxUser, NomeRP: nomeRP, CognomeRP: cognomeRP, DataNascita: dataNascita}
+		db.Exec("INSERT OR REPLACE INTO anagrafe (user_id, roblox_user, nome_rp, cognome_rp, data_nascita) VALUES (?, ?, ?, ?, ?)", userID, robloxUser, nomeRP, cognomeRP, dataNascita)
 		respond(s, i, "🇮🇹 **Richiesta Cittadinanza Inviata!**")
 
 		embed := &discordgo.MessageEmbed{
@@ -1243,7 +1360,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		modelloAuto := modalVal(data, 1)
 		targa := strings.ToUpper(strings.TrimSpace(modalVal(data, 2)))
 
-		dbImmatricolazioni[targa] = ImmatricolazioneRecord{UserID: userID, RobloxUser: robloxUser, Targa: targa, ModelloAuto: modelloAuto}
+		db.Exec("INSERT OR REPLACE INTO immatricolazioni (targa, user_id, roblox_user, modello_auto) VALUES (?, ?, ?, ?)", targa, userID, robloxUser, modelloAuto)
 		respond(s, i, "🚗 **Immatricolazione Inviata!**")
 
 		embed := &discordgo.MessageEmbed{
@@ -1264,6 +1381,8 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		prigione := modalVal(data, 2)
 		cauzione := modalVal(data, 3)
 
+		db.Exec("INSERT INTO arresti (agente_id, arrestato_roblox, reati, pena, cauzione, data) VALUES (?, ?, ?, ?, ?, ?)", userID, utenteArrestato, reati, prigione, cauzione, nowDate)
+
 		embed := &discordgo.MessageEmbed{
 			Title: "🚨 VERBALE D'ARRESTO UFFICIALE",
 			Color: 0xE74C3C,
@@ -1275,7 +1394,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				{Name: "Reati", Value: truncate(reati, 1000), Inline: false},
 			},
 		}
-		respond(s, i, "🚨 **Verbale Registrato!**")
+		respond(s, i, "🚨 **Verbale Registrato e archiviato nel Database Polizia!**")
 		sendApproval(s, esitiChannel("registra-arresto", i.ChannelID), embed, userID, "Approva (Sì)", "Annulla (No)")
 
 	case "modal_emetti_multa":
@@ -1283,6 +1402,8 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		importo := modalVal(data, 1)
 		motivo := modalVal(data, 2)
 		targa := modalVal(data, 3)
+
+		db.Exec("INSERT INTO multe (agente_id, multato_roblox, importo, motivo, targa, data) VALUES (?, ?, ?, ?, ?, ?)", userID, utenteMultato, importo, motivo, targa, nowDate)
 
 		embed := &discordgo.MessageEmbed{
 			Title: "📄 SANZIONE STRADALE / VERBALE MULTA",
@@ -1295,7 +1416,7 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				{Name: "Infrazione", Value: truncate(motivo, 1000), Inline: false},
 			},
 		}
-		respond(s, i, "📄 **Multa Emessa!**")
+		respond(s, i, "📄 **Multa Emessa e archiviata nel Database Polizia!**")
 		sendApproval(s, esitiChannel("emetti-multa", i.ChannelID), embed, userID, "Approva (Sì)", "Annulla (No)")
 	}
 }
