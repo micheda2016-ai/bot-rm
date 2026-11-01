@@ -242,7 +242,7 @@ func main() {
 		port = "10000"
 	}
 
-	// Server HTTP per mantenere il servizio attivo su Render
+	// Server HTTP per mantenere attivo il servizio su Render
 	go func() {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintln(w, "Bot Rome Italy 2.0 Online!")
@@ -253,14 +253,13 @@ func main() {
 		}
 	}()
 
-	rawToken := os.Getenv("DISCORD_TOKEN")
-	token := strings.TrimSpace(rawToken)
+	// Lettura sicura del token dalle variabili d'ambiente di Render
+	token := strings.TrimSpace(os.Getenv("DISCORD_TOKEN"))
 	token = strings.TrimPrefix(token, "Bot ")
 	token = strings.TrimSpace(token)
 
 	if token == "" {
-		log.Println("⚠️ ERRORE CRITICO: La variabile DISCORD_TOKEN è vuota o non impostata!")
-		return
+		log.Fatalf("⚠️ ERRORE CRITICO: La variabile DISCORD_TOKEN non è impostata su Render!")
 	}
 
 	dg, err := discordgo.New("Bot " + token)
@@ -275,7 +274,7 @@ func main() {
 	}
 	defer dg.Close()
 
-	log.Println("✅ Bot 'Rome Italy 2.0' avviato con successo!")
+	log.Println("✅ Bot 'Rome Italy 2.0' avviato e connesso a Discord con successo!")
 	registerCommands(dg)
 
 	// Avvia il timer per il prelievo automatico delle tasse
