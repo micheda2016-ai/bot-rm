@@ -223,7 +223,6 @@ func sendPanel(s *discordgo.Session, channelID string, embed *discordgo.MessageE
 	s.ChannelMessageSendComplex(channelID, msg)
 }
 
-// Controlla se un membro ha il ruolo amministrazione
 func hasAdminRole(member *discordgo.Member) bool {
 	for _, r := range member.Roles {
 		if r == adminRoleID {
@@ -327,7 +326,7 @@ func startTaxScheduler(s *discordgo.Session) {
 // ---------------------------------------------------------------------------
 
 func registerCommands(s *discordgo.Session) {
-	staffPerm := int64(discordgo.PermissionManageGuild)
+	staffPerm := int64(32) // Permesso Gestisci Server (Manage Guild)
 
 	setupSub := func(name, desc string) *discordgo.ApplicationCommandOption {
 		return &discordgo.ApplicationCommandOption{
@@ -496,7 +495,6 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// COMANDO BONIFICO
 	if data.Name == "bonifico" {
 		senderID := i.Member.User.ID
 		destUser := data.Options[0].UserValue(s)
@@ -514,7 +512,7 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 		senderAcc, senderExists := userBankAccounts[senderID]
 		if !senderExists {
-			respond(s, i, "❌ Non hai un conto corrente attivo! Aprilo tramite l'apposito pannello.")
+			respond(s, i, "❌ Non hai un conto corrente attivo!")
 			return
 		}
 
@@ -525,30 +523,27 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 
 		if senderAcc.Balance < importo {
-			respond(s, i, fmt.Sprintf("⚠️ **Saldo insufficiente!** Nel tuo conto hai `€ %d`, ma vuoi inviare `€ %d`.", senderAcc.Balance, importo))
+			respond(s, i, fmt.Sprintf("⚠️ **Saldo insufficiente!** Hai `€ %d`, ma vuoi inviare `€ %d`.", senderAcc.Balance, importo))
 			return
 		}
 
-		// Esegue il trasferimento
 		senderAcc.Balance -= importo
 		userBankAccounts[senderID] = senderAcc
 
 		destAcc.Balance += importo
 		userBankAccounts[destUser.ID] = destAcc
 
-		respond(s, i, fmt.Sprintf("✅ **Bonifico Effettuato con Successo!** Hai inviato **€ %d** a <@%s>.\n💰 Il tuo nuovo saldo è: `€ %d`", importo, destUser.ID, senderAcc.Balance))
+		respond(s, i, fmt.Sprintf("✅ **Bonifico Effettuato!** Inviati **€ %d** a <@%s>.\n💰 Saldo residuo: `€ %d`", importo, destUser.ID, senderAcc.Balance))
 
-		// Notifica in DM al destinatario
 		if ch, err := s.UserChannelCreate(destUser.ID); err == nil {
 			s.ChannelMessageSend(ch.ID, fmt.Sprintf("💸 **BONIFICO RICEVUTO:** Hai ricevuto un bonifico di **€ %d** da <@%s>.\n💰 Saldo attuale: `€ %d`", importo, senderID, destAcc.Balance))
 		}
 		return
 	}
 
-	// COMANDO AGGIUNGI SOLDI (RISERVATO AMMINISTRAZIONE)
 	if data.Name == "aggiungi-soldi" {
 		if !hasAdminRole(i.Member) {
-			respond(s, i, "❌ Non hai i permessi necessari per usare questo comando (riservato al ruolo Amministrazione).")
+			respond(s, i, "❌ Non hai i permessi necessari (riservato all'Amministrazione).")
 			return
 		}
 
@@ -569,16 +564,14 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		targetAcc.Balance += importo
 		userBankAccounts[targetUser.ID] = targetAcc
 
-		respond(s, i, fmt.Sprintf("✅ **Operazione Riuscita!** Sono stati aggiunti **€ %d** sul conto di <@%s>.\n💰 Nuovo saldo dell'utente: `€ %d`", importo, targetUser.ID, targetAcc.Balance))
+		respond(s, i, fmt.Sprintf("✅ **Accredito Riuscito!** Aggiunti **€ %d** sul conto di <@%s>.\n💰 Nuovo saldo: `€ %d`", importo, targetUser.ID, targetAcc.Balance))
 
-		// Notifica in DM all'utente
 		if ch, err := s.UserChannelCreate(targetUser.ID); err == nil {
-			s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏦 **ACCREDITO AMMINISTRAZIONE:** L'Amministrazione ti ha accreditato **€ %d** sul tuo conto corrente.\n💰 Saldo attuale: `€ %d`", importo, targetAcc.Balance))
+			s.ChannelMessageSend(ch.ID, fmt.Sprintf("🏦 **ACCREDITO AMMINISTRAZIONE:** Ti sono stati accreditati **€ %d** sul conto corrente.\n💰 Saldo attuale: `€ %d`", importo, targetAcc.Balance))
 		}
 		return
 	}
 
-	// SISTEMA WARN
 	if data.Name == "warn" {
 		targetUser := data.Options[0].UserValue(s)
 		reason := data.Options[1].StringValue()
@@ -656,17 +649,16 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func channelInfoText(key string) string {
 	cfg := getOrCreateConfig(key)
 	if cfg.PanelChannelID == "" {
-		return "⚠️ *Nessun canale impostato in `/setup server`. Verrà inviato qui.*"
+		return "⚠️ *Nessun canale impostato in `/setup server`.*"
 	}
-	return fmt.Sprintf("📍 *Canale di destinazione:* <#%s>", cfg.PanelChannelID)
+	return fmt.Sprintf("📍 *Canale:* <#%s>", cfg.PanelChannelID)
 }
 
 func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
 		Title: "🏛️ GESTIONE FISCALE E TASSE - ROME ITALY 2.0",
 		Description: fmt.Sprintf(
-			"Usa i pulsanti per pubblicare il pannello o configurare le tasse.\n\n"+
-				"**Tasse generali attuali:**\n• Conto: € %d\n• Immatricolazione: € %d\n• Immobili: € %d\n• Frequenza: ogni %d giorni (%s)\n\n"+
+			"**Tasse generali:**\n• Conto: € %d\n• Immatricolazione: € %d\n• Immobili: € %d\n• Frequenza: ogni %d giorni (%s)\n\n"+
 				"Utenti con tasse personalizzate: **%d**\n\n%s",
 			defaultTaxes.Conto, defaultTaxes.Immatricolazione, defaultTaxes.Immobili,
 			defaultTaxes.IntervalDays, defaultTaxes.CustomDeadline,
@@ -675,13 +667,13 @@ func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	row1 := discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{Label: "Invia Pannello nel Canale", Style: discordgo.SuccessButton, CustomID: "send_panel_to_channel_tasse", Emoji: &discordgo.ComponentEmoji{Name: "📨"}},
+		discordgo.Button{Label: "Invia Pannello", Style: discordgo.SuccessButton, CustomID: "send_panel_to_channel_tasse", Emoji: &discordgo.ComponentEmoji{Name: "📨"}},
 		discordgo.Button{Label: "Tasse Generali", Style: discordgo.PrimaryButton, CustomID: "btn_config_tasse_generali", Emoji: &discordgo.ComponentEmoji{Name: "⚙️"}},
-		discordgo.Button{Label: "Tempo / Frequenza", Style: discordgo.PrimaryButton, CustomID: "btn_config_tasse_time", Emoji: &discordgo.ComponentEmoji{Name: "⏱️"}},
+		discordgo.Button{Label: "Frequenza", Style: discordgo.PrimaryButton, CustomID: "btn_config_tasse_time", Emoji: &discordgo.ComponentEmoji{Name: "⏱️"}},
 	}}
 	row2 := discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{Label: "Tassa Personalizzata Utente", Style: discordgo.SecondaryButton, CustomID: "btn_config_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "👤"}},
-		discordgo.Button{Label: "Rimuovi Tassa Personalizzata", Style: discordgo.DangerButton, CustomID: "btn_reset_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "🗑️"}},
+		discordgo.Button{Label: "Tassa Personalizzata", Style: discordgo.SecondaryButton, CustomID: "btn_config_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "👤"}},
+		discordgo.Button{Label: "Rimuovi Personalizzata", Style: discordgo.DangerButton, CustomID: "btn_reset_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "🗑️"}},
 	}}
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -697,11 +689,11 @@ func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func sendPanelPreview(s *discordgo.Session, i *discordgo.InteractionCreate, serviceKey string) {
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("📤 INVIA PANNELLO: %s", strings.ToUpper(serviceKey)),
-		Description: fmt.Sprintf("Clicca sul pulsante per pubblicare il pannello nel canale configurato.\n\n%s", channelInfoText(serviceKey)),
+		Description: fmt.Sprintf("Clicca sul pulsante per pubblicare il pannello.\n\n%s", channelInfoText(serviceKey)),
 		Color:       0x3498DB,
 	}
 	btnSend := discordgo.Button{
-		Label:    "Invia Pannello nel Canale",
+		Label:    "Invia Pannello",
 		Style:    discordgo.SuccessButton,
 		CustomID: "send_panel_to_channel_" + serviceKey,
 		Emoji:    &discordgo.ComponentEmoji{Name: "📨"},
@@ -720,8 +712,8 @@ func sendPanelPreview(s *discordgo.Session, i *discordgo.InteractionCreate, serv
 
 func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	embed := &discordgo.MessageEmbed{
-		Title:       "⚙️ CONFIGURAZIONE GLOBALE COMANDI - ROME ITALY 2.0",
-		Description: "Seleziona dal menu il comando che vuoi configurare:",
+		Title:       "⚙️ CONFIGURAZIONE GLOBALE COMANDI",
+		Description: "Seleziona dal menu il comando da configurare:",
 		Color:       0x0099FF,
 	}
 
@@ -736,17 +728,17 @@ func sendServerSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 	selectMenu := discordgo.SelectMenu{
 		CustomID:    "setup_server_select",
-		Placeholder: "Scegli il comando da configurare...",
+		Placeholder: "Scegli il comando...",
 		Options: []discordgo.SelectMenuOption{
-			opt("Cittadinanza & Anagrafe", "cittadinanza", "🇮🇹"),
+			opt("Cittadinanza", "cittadinanza", "🇮🇹"),
 			opt("Porto d'Armi", "porto-darmi", "🔫"),
-			opt("Apertura Conto Bancario", "apri-conto", "💳"),
-			opt("Riscossione Busta Paga", "busta-paga", "💵"),
-			opt("Immatricolazione Veicoli", "immatricolazione", "🚗"),
-			opt("Registro Arresti FDO", "registra-arresto", "🚨"),
-			opt("Emissione Multe", "emetti-multa", "📄"),
-			opt("Tasse e Fisco", "tasse", "🏛️"),
-			opt("Staff & Moderazione Panel", "staff-panel", "🛡️"),
+			opt("Apertura Conto", "apri-conto", "💳"),
+			opt("Busta Paga", "busta-paga", "💵"),
+			opt("Immatricolazione", "immatricolazione", "🚗"),
+			opt("Registro Arresti", "registra-arresto", "🚨"),
+			opt("Emetti Multa", "emetti-multa", "📄"),
+			opt("Tasse", "tasse", "🏛️"),
+			opt("Staff Panel", "staff-panel", "🛡️"),
 		},
 	}
 
@@ -788,7 +780,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch customID {
 	case "btn_config_tasse_generali":
 		openModal(s, i, "modal_config_tasse_base", "Configura Tasse Generali",
-			inputRow("input_tax_conto", "Tassa Conto Corrente (€)", discordgo.TextInputShort, strconv.Itoa(defaultTaxes.Conto), "", true),
+			inputRow("input_tax_conto", "Tassa Conto (€)", discordgo.TextInputShort, strconv.Itoa(defaultTaxes.Conto), "", true),
 			inputRow("input_tax_imm", "Tassa Immatricolazione (€)", discordgo.TextInputShort, strconv.Itoa(defaultTaxes.Immatricolazione), "", true),
 			inputRow("input_tax_immobili", "Tassa Immobili (€)", discordgo.TextInputShort, strconv.Itoa(defaultTaxes.Immobili), "", true),
 		)
@@ -796,7 +788,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	case "btn_config_tasse_time":
 		openModal(s, i, "modal_config_tasse_time", "Tempo e Scadenza Tasse",
-			inputRow("input_tax_days", "Ogni quanti giorni pagare le tasse?", discordgo.TextInputShort, strconv.Itoa(defaultTaxes.IntervalDays), "Es. 7", true),
+			inputRow("input_tax_days", "Ogni quanti giorni pagare?", discordgo.TextInputShort, strconv.Itoa(defaultTaxes.IntervalDays), "Es. 7", true),
 			inputRow("input_tax_deadline_note", "Note/Scadenza", discordgo.TextInputShort, defaultTaxes.CustomDeadline, "Es. Ogni settimana", true),
 		)
 		return
@@ -804,7 +796,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	case "btn_config_tasse_user", "btn_reset_tasse_user":
 		prefix, text := "seluser_tasse", "👤 Scegli l'utente:"
 		if customID == "btn_reset_tasse_user" {
-			prefix, text = "seluserreset_tasse", "🗑️ Scegli l'utente a cui rimuovere la tassa personalizzata:"
+			prefix, text = "seluserreset_tasse", "🗑️ Scegli l'utente a cui rimuovere la tassa:"
 		}
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -826,7 +818,7 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 		target := values[0]
 		t, _ := getUserTaxes(target)
-		openModal(s, i, "modal_tasse_user_"+target, "Tasse Personalizzate Utente",
+		openModal(s, i, "modal_tasse_user_"+target, "Tasse Personalizzate",
 			inputRow("u_conto", "Tassa Conto (€)", discordgo.TextInputShort, strconv.Itoa(t.Conto), "", true),
 			inputRow("u_imm", "Tassa Immatricolazione (€)", discordgo.TextInputShort, strconv.Itoa(t.Immatricolazione), "", true),
 			inputRow("u_immobili", "Tassa Immobili (€)", discordgo.TextInputShort, strconv.Itoa(t.Immobili), "", true),
@@ -872,9 +864,9 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 		if ch, err := s.UserChannelCreate(targetUserID); err == nil {
 			if azione == "yes" {
-				s.ChannelMessageSend(ch.ID, "🎉 **Esito Modulo:** La tua richiesta inviata nel server **Rome Italy 2.0** è stata **APPROVATA** dallo Staff!")
+				s.ChannelMessageSend(ch.ID, "🎉 **Esito Modulo:** La tua richiesta nel server **Rome Italy 2.0** è stata **APPROVATA** dallo Staff!")
 			} else {
-				s.ChannelMessageSend(ch.ID, "❌ **Esito Modulo:** Ci dispiace, la tua richiesta nel server **Rome Italy 2.0** è stata **RIFIUTATA** dallo Staff.")
+				s.ChannelMessageSend(ch.ID, "❌ **Esito Modulo:** La tua richiesta nel server **Rome Italy 2.0** è stata **RIFIUTATA** dallo Staff.")
 			}
 		}
 		return
