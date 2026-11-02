@@ -82,6 +82,7 @@ func initDatabase() {
 		`CREATE TABLE IF NOT EXISTS immatricolazioni (targa TEXT PRIMARY KEY, user_id TEXT, roblox_user TEXT, modello_auto TEXT);`,
 		`CREATE TABLE IF NOT EXISTS arresti (id INTEGER PRIMARY KEY AUTOINCREMENT, agente_id TEXT, arrestato_roblox TEXT, reati TEXT, pena TEXT, cauzione TEXT, data TEXT);`,
 		`CREATE TABLE IF NOT EXISTS multe (id INTEGER PRIMARY KEY AUTOINCREMENT, agente_id TEXT, multato_roblox TEXT, importo TEXT, motivo TEXT, targa TEXT, data TEXT);`,
+		`CREATE TABLE IF NOT EXISTS tax_overrides (user_id TEXT PRIMARY KEY, conto INTEGER, immatricolazione INTEGER, immobili INTEGER);`,
 	}
 
 	for _, q := range queries {
@@ -421,6 +422,15 @@ func registerCommands(s *discordgo.Session) {
 			},
 		},
 		{
+			Name:                     "backup",
+			Description:              "Comandi di salvataggio e backup del Database SQLite (Solo Amministrazione)",
+			DefaultMemberPermissions: &staffPerm,
+			Options: []*discordgo.ApplicationCommandOption{
+				setupSub("scarica", "Scarica il file bot.db originale di backup"),
+				setupSub("dati", "Visualizza la panoramica di tutti i dati salvati su SQLite"),
+			},
+		},
+		{
 			Name:                     "visualizza",
 			Description:              "Comandi di visualizzazione database per lo Staff",
 			DefaultMemberPermissions: &staffPerm,
@@ -645,10 +655,6 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// ---------------------------------------------------------------------------
-	// NUOVI COMANDI POLIZIA & CITTADINANZA
-	// ---------------------------------------------------------------------------
-
 	if data.Name == "database-polizia" {
 		robloxName := data.Options[0].StringValue()
 		avatarURL := getRobloxAvatar(robloxName)
@@ -656,7 +662,6 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("🚨 **BANCA DATI POLIZIA DI STATO / CARABINIERI**\n🔍 Storico per l'utente Roblox: `@%s`\n\n", robloxName))
 
-		// Ricerca Arresti
 		sb.WriteString("📌 **VERBALI D'ARRESTO:**\n")
 		rowsA, errA := db.Query("SELECT agente_id, reati, pena, cauzione, data FROM arresti WHERE LOWER(arrestato_roblox) = LOWER(?)", robloxName)
 		countArresti := 0
@@ -673,7 +678,6 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			sb.WriteString(" *Nessun arresto presente negli archivi.*\n")
 		}
 
-		// Ricerca Multe
 		sb.WriteString("\n📄 **SANZIONI STRADALI (MULTE):**\n")
 		rowsM, errM := db.Query("SELECT agente_id, importo, motivo, targa, data FROM multe WHERE LOWER(multato_roblox) = LOWER(?)", robloxName)
 		countMulte := 0
@@ -802,6 +806,80 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	sub := data.Options[0].Name
 
+	// ---------------------------------------------------------------------------
+	// NUOVO COMANDO BACKUP SQLITE
+	// ---------------------------------------------------------------------------
+
+	if data.Name == "backup" {
+		if !hasAdminRole(i.Member) {
+			respond(s, i, "❌ Non hai i permessi di Amministrazione per eseguire questo comando.")
+			return
+		}
+
+		if sub == "scarica" {
+			file, err := os.Open("./bot.db")
+			if err != nil {
+				respond(s, i, "❌ Errore nell'apertura del file database: bot.db non trovato.")
+				return
+			}
+			defer file.Close()
+
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "💾 **BACKUP DATABASE COMPLETO (bot.db)**\nEcco il file del database SQLite contenente tutti i dati registrati:",
+					Flags:   discordgo.MessageFlagsEphemeral,
+					Files: []*discordgo.File{
+						{
+							Name:        "bot.db",
+							ContentType: "application/x-sqlite3",
+							Reader:      file,
+						},
+					},
+				},
+			})
+			return
+		}
+
+		if sub == "dati" {
+			var countBanche, countWarns, countAnagrafe, countPorto, countImm, countArresti, countMulte, countTax int
+
+			db.QueryRow("SELECT COUNT(*) FROM bank_accounts").Scan(&countBanche)
+			db.QueryRow("SELECT COUNT(*) FROM warns").Scan(&countWarns)
+			db.QueryRow("SELECT COUNT(*) FROM anagrafe").Scan(&countAnagrafe)
+			db.QueryRow("SELECT COUNT(*) FROM porto_darmi").Scan(&countPorto)
+			db.QueryRow("SELECT COUNT(*) FROM immatricolazioni").Scan(&countImm)
+			db.QueryRow("SELECT COUNT(*) FROM arresti").Scan(&countArresti)
+			db.QueryRow("SELECT COUNT(*) FROM multe").Scan(&countMulte)
+			db.QueryRow("SELECT COUNT(*) FROM tax_overrides").Scan(&countTax)
+
+			embed := &discordgo.MessageEmbed{
+				Title: "📊 PANORAMICA DATI SALVATI SU SQLITE (bot.db)",
+				Color: 0x9B59B6,
+				Description: fmt.Sprintf(
+					"**Stato Database:** 🟢 Connesso e Operativo\n\n"+
+						"💳 **Conti Bancari Registrati:** `%d`\n"+
+						"🇮🇹 **Carte d'Identità Anagrafe:** `%d`\n"+
+						"🚨 **Verbali d'Arresto Archiviati:** `%d`\n"+
+						"📄 **Multe Stradali Registrate:** `%d`\n"+
+						"🚗 **Veicoli Immatricolati (PRA):** `%d`\n"+
+						"🔫 **Licenze Porto d'Armi:** `%d`\n"+
+						"⚠️ **Cittadini Warnati:** `%d`\n"+
+						"👤 **Tasse Personalizzate:** `%d`",
+					countBanche, countAnagrafe, countArresti, countMulte, countImm, countPorto, countWarns, countTax),
+			}
+
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embed},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+	}
+
 	if data.Name == "visualizza" {
 		var sb strings.Builder
 		switch sub {
@@ -880,12 +958,21 @@ func channelInfoText(key string) string {
 }
 
 func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	var customCount int
+	db.QueryRow("SELECT COUNT(*) FROM tax_overrides").Scan(&customCount)
+
 	embed := &discordgo.MessageEmbed{
 		Title: "🏛️ GESTIONE FISCALE E TASSE - ROME ITALY 2.0",
 		Description: fmt.Sprintf(
-			"**Tasse generali:**\n• Conto: € %d\n• Immatricolazione: € %d\n• Immobili: € %d\n• Frequenza: ogni %d giorni (%s)\n\n%s",
+			"**Tasse Generali Standard:**\n"+
+				"• Tassa Conto: € %d\n"+
+				"• Tassa Immatricolazione: € %d\n"+
+				"• Tassa Immobili: € %d\n"+
+				"• Frequenza Prelievo: ogni %d giorni (%s)\n\n"+
+				"👤 **Utenti con Tasse Personalizzate:** `%d`\n\n%s",
 			defaultTaxes.Conto, defaultTaxes.Immatricolazione, defaultTaxes.Immobili,
-			defaultTaxes.IntervalDays, defaultTaxes.CustomDeadline, channelInfoText("tasse")),
+			defaultTaxes.IntervalDays, defaultTaxes.CustomDeadline,
+			customCount, channelInfoText("tasse")),
 		Color: 0x95A5A6,
 	}
 
@@ -895,11 +982,16 @@ func sendTasseSetupPanel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		discordgo.Button{Label: "Frequenza", Style: discordgo.PrimaryButton, CustomID: "btn_config_tasse_time", Emoji: &discordgo.ComponentEmoji{Name: "⏱️"}},
 	}}
 
+	row2 := discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+		discordgo.Button{Label: "Tassa Personalizzata", Style: discordgo.SecondaryButton, CustomID: "btn_config_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "👤"}},
+		discordgo.Button{Label: "Rimuovi Personalizzata", Style: discordgo.DangerButton, CustomID: "btn_reset_tasse_user", Emoji: &discordgo.ComponentEmoji{Name: "🗑️"}},
+	}}
+
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: []discordgo.MessageComponent{row1},
+			Components: []discordgo.MessageComponent{row1, row2},
 			Flags:      discordgo.MessageFlagsEphemeral,
 		},
 	})
@@ -1006,6 +1098,51 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			inputRow("input_tax_days", "Ogni quanti giorni pagare?", discordgo.TextInputShort, strconv.Itoa(defaultTaxes.IntervalDays), "Es. 7", true),
 			inputRow("input_tax_deadline_note", "Note/Scadenza", discordgo.TextInputShort, defaultTaxes.CustomDeadline, "Es. Ogni settimana", true),
 		)
+		return
+
+	case "btn_config_tasse_user", "btn_reset_tasse_user":
+		prefix, text := "seluser_tasse", "👤 Scegli l'utente per personalizzare le tasse:"
+		if customID == "btn_reset_tasse_user" {
+			prefix, text = "seluserreset_tasse", "🗑️ Scegli l'utente a cui ripristinare le tasse generali:"
+		}
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: text,
+				Flags:   discordgo.MessageFlagsEphemeral,
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+						discordgo.SelectMenu{CustomID: prefix, Placeholder: "Seleziona utente...", MenuType: discordgo.UserSelectMenu},
+					}},
+				},
+			},
+		})
+		return
+
+	case "seluser_tasse":
+		if len(values) == 0 {
+			return
+		}
+		target := values[0]
+		var cConto, cImm, cImmobili int
+		err := db.QueryRow("SELECT conto, immatricolazione, immobili FROM tax_overrides WHERE user_id = ?", target).Scan(&cConto, &cImm, &cImmobili)
+		if err != nil {
+			cConto, cImm, cImmobili = defaultTaxes.Conto, defaultTaxes.Immatricolazione, defaultTaxes.Immobili
+		}
+		openModal(s, i, "modal_tasse_user_"+target, "Tasse Personalizzate Utente",
+			inputRow("u_conto", "Tassa Conto (€)", discordgo.TextInputShort, strconv.Itoa(cConto), "", true),
+			inputRow("u_imm", "Tassa Immatricolazione (€)", discordgo.TextInputShort, strconv.Itoa(cImm), "", true),
+			inputRow("u_immobili", "Tassa Immobili (€)", discordgo.TextInputShort, strconv.Itoa(cImmobili), "", true),
+		)
+		return
+
+	case "seluserreset_tasse":
+		if len(values) == 0 {
+			return
+		}
+		target := values[0]
+		db.Exec("DELETE FROM tax_overrides WHERE user_id = ?", target)
+		respond(s, i, fmt.Sprintf("✅ Tassa personalizzata rimossa con successo per <@%s>.", target))
 		return
 	}
 
@@ -1257,7 +1394,7 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 	case "staff-panel":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "🛡️ PANNELLO STAFF - ROME ITALY 2.0",
-			Description: "Comandi:\n• `/warn`\n• `/ban-game`\n• `/database-polizia`\n• `/fedina-penale`\n• `/visualizza-cittadinanza`\n• `/bonifico`\n• `/aggiungi-soldi` (Admin)\n• `/visualizza`",
+			Description: "Comandi:\n• `/warn`\n• `/ban-game`\n• `/database-polizia`\n• `/fedina-penale`\n• `/visualizza-cittadinanza`\n• `/backup`\n• `/bonifico`\n• `/aggiungi-soldi` (Admin)\n• `/visualizza`",
 			Color:       0x2C3E50,
 		}, nil)
 	}
@@ -1289,6 +1426,17 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		defaultTaxes.IntervalDays = days
 		defaultTaxes.CustomDeadline = modalVal(data, 1)
 		respond(s, i, "✅ **Tempo Tasse Aggiornato!**")
+		return
+	}
+
+	if strings.HasPrefix(customID, "modal_tasse_user_") {
+		target := strings.TrimPrefix(customID, "modal_tasse_user_")
+		cConto := parseEuro(modalVal(data, 0))
+		cImm := parseEuro(modalVal(data, 1))
+		cImmobili := parseEuro(modalVal(data, 2))
+
+		db.Exec("INSERT OR REPLACE INTO tax_overrides (user_id, conto, immatricolazione, immobili) VALUES (?, ?, ?, ?)", target, cConto, cImm, cImmobili)
+		respond(s, i, fmt.Sprintf("✅ **Tasse personalizzate salvate per <@%s>!**\nConto: € %d | Immatricolazione: € %d | Immobili: € %d", target, cConto, cImm, cImmobili))
 		return
 	}
 
