@@ -806,10 +806,6 @@ func handleSlashCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	sub := data.Options[0].Name
 
-	// ---------------------------------------------------------------------------
-	// NUOVO COMANDO BACKUP SQLITE
-	// ---------------------------------------------------------------------------
-
 	if data.Name == "backup" {
 		if !hasAdminRole(i.Member) {
 			respond(s, i, "❌ Non hai i permessi di Amministrazione per eseguire questo comando.")
@@ -1331,13 +1327,32 @@ func handleComponents(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	case "btn_riscuoti_stipendio":
 		userID := i.Member.User.ID
-		var dummy string
-		if db.QueryRow("SELECT user_id FROM bank_accounts WHERE user_id = ?", userID).Scan(&dummy) != nil {
+		var lastPaydayStr string
+		err := db.QueryRow("SELECT last_payday FROM bank_accounts WHERE user_id = ?", userID).Scan(&lastPaydayStr)
+		if err != nil {
 			respond(s, i, "❌ Devi prima aprire un conto corrente!")
 			return
 		}
-		db.Exec("UPDATE bank_accounts SET balance = balance + ? WHERE user_id = ?", stipendioFisso, userID)
-		respond(s, i, fmt.Sprintf("✅ **Busta Paga Riscossa!** +€ %d", stipendioFisso))
+
+		// Controllo se sono passati almeno 7 giorni dall'ultimo ritiro
+		if lastPaydayStr != "" {
+			lastPayday, err := time.Parse(time.RFC3339, lastPaydayStr)
+			if err == nil {
+				nextAvailable := lastPayday.Add(7 * 24 * time.Hour)
+				if time.Now().Before(nextAvailable) {
+					timeLeft := time.Until(nextAvailable)
+					days := int(timeLeft.Hours() / 24)
+					hours := int(int(timeLeft.Hours()) % 24)
+					respond(s, i, fmt.Sprintf("⏳ **Hai già riscosso la tua busta paga questa settimana!**\nPotrai ritirarla nuovamente tra **%d giorni e %d ore**.", days, hours))
+					return
+				}
+			}
+		}
+
+		// Aggiorna il saldo e registra la data odierna come ultimo ritiro
+		nowStr := time.Now().Format(time.RFC3339)
+		db.Exec("UPDATE bank_accounts SET balance = balance + ?, last_payday = ? WHERE user_id = ?", stipendioFisso, nowStr, userID)
+		respond(s, i, fmt.Sprintf("✅ **Busta Paga Riscossa!** +€ %d. Potrai riscuoterla nuovamente tra 7 giorni.", stipendioFisso))
 	}
 }
 
@@ -1358,7 +1373,7 @@ func publishPublicPanel(s *discordgo.Session, channelID string, serviceKey strin
 	case "busta-paga":
 		sendPanel(s, channelID, &discordgo.MessageEmbed{
 			Title:       "💼 RISCOSSIONE BUSTA PAGA - ROME ITALY 2.0",
-			Description: fmt.Sprintf("Riscuoti la busta paga settimanale di **€ %d**!", stipendioFisso),
+			Description: fmt.Sprintf("Riscuoti la busta paga settimanale di **€ %d**! (Puoi ritirarla 1 volta ogni 7 giorni)", stipendioFisso),
 			Color:       0xF1C40F,
 		}, &discordgo.Button{Label: fmt.Sprintf("Riscuoti Busta Paga (€ %d)", stipendioFisso), Style: discordgo.PrimaryButton, CustomID: "btn_riscuoti_stipendio", Emoji: &discordgo.ComponentEmoji{Name: "💵"}})
 	case "cittadinanza":
@@ -1446,9 +1461,9 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		robloxUser := modalVal(data, 1)
 
 		db.Exec("INSERT OR REPLACE INTO bank_accounts (user_id, owner_name, roblox_name, bank_name, balance, last_payday, last_tax_paid) VALUES (?, ?, ?, ?, 7000, ?, ?)",
-			userID, nomeRP, robloxUser, banca, time.Now().Format(time.RFC3339), time.Now().Format(time.RFC3339))
+			userID, nomeRP, robloxUser, banca, time.Now().Add(-8*24*time.Hour).Format(time.RFC3339), time.Now().Format(time.RFC3339))
 
-		respond(s, i, "🎉 **Conto Aperto!** Hai ricevuto **€ 7.000** di bonus.")
+		respond(s, i, "🎉 **Conto Aperto!** Hai ricevuto **€ 7.000** di bonus e puoi riscuotere subito la busta paga.")
 
 		embed := &discordgo.MessageEmbed{
 			Title: "💳 NUOVA APERTURA CONTO BANCARIO",
